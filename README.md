@@ -13,9 +13,9 @@ e insights. La visión, las fases y sus dependencias están en
 ## Estado actual
 
 La primera funcionalidad implementada es una librería Python que procesa
-cartolas PDF digitales de Cuenta Vista de Banco de Chile. Reconoce solo el
-layout representado por
-[`media/cartola_ejemplo_banco_chile.pdf`](media/cartola_ejemplo_banco_chile.pdf).
+cartolas PDF digitales de Cuenta Vista de Banco de Chile. Soporta el layout
+inicial y las variantes sintéticas documentadas de varias páginas, períodos que
+cruzan de año, columnas desplazadas y metadatos reordenados.
 
 El parser devuelve una cartola normalizada y conciliada, o un error explícito
 si el PDF no es legible, está protegido, no contiene texto extraíble, no
@@ -48,7 +48,7 @@ cuenta se enmascara antes de entregarse al consumidor.
 
 - No hay API, persistencia, interfaz gráfica, categorización, métricas, IA ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
-- Las cartolas multipágina aún no están validadas.
+- El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
 
 ## Documentación
@@ -56,3 +56,5 @@ cuenta se enmascara antes de entregarse al consumidor.
 - [Roadmap del proyecto](docs/roadmap.md): visión, prioridades y fases futuras.
 - [Especificación de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/spec.md).
 - [Plan técnico de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/plan.md).
+- [Especificación de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/spec.md).
+- [Plan técnico de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/plan.md).

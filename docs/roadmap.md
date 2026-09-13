@@ -28,21 +28,24 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-La fase 1 está completada: existe una librería Python para la cartola digital de
-Cuenta Vista Banco de Chile representada por el fixture sintético de aceptación.
-El parser valida el PDF, reconoce el formato, normaliza sus movimientos,
-enmascara la cuenta y exige conciliación general. No hay API, base de datos,
-interfaz, OCR, categorización ni IA.
+Las fases 1 y 2 están completadas: existe una librería Python para la cartola
+digital de Cuenta Vista Banco de Chile. El parser valida el PDF, reconoce el
+formato, normaliza sus movimientos, enmascara la cuenta y exige conciliación
+general. La fase 2 añadió variantes sintéticas de varias páginas, períodos que
+cruzan de año, columnas desplazadas y metadatos reordenados. No hay API, base
+de datos, interfaz, OCR, categorización ni IA.
 
-Los requisitos y límites exactos de esta fase están en
-[`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/).
+Los requisitos y límites exactos están en
+[`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
+y
+[`specs/banco-chile-cuenta-vista-ingestion-hardening/`](../specs/banco-chile-cuenta-vista-ingestion-hardening/).
 
 ## Fases
 
 | Fase | Resultado | Dependencia | Estado |
 | --- | --- | --- | --- |
 | 1. Ingesta inicial | Parser determinista de Cuenta Vista Banco de Chile, validado con fixture sintético y conciliación. | Ninguna. | Completada |
-| 2. Robustecimiento de ingesta | Soporte aprobado para variaciones de layout, varias páginas y períodos que crucen de año, respaldado por fixtures autorizados. | Fase 1. | Pendiente |
+| 2. Robustecimiento de ingesta | Soporte aprobado para variantes sintéticas de layout, varias páginas y períodos que cruzan de año, respaldado por fixtures versionados. | Fase 1. | Completada |
 | 3. Servicio de procesamiento | API de carga y consulta con límites, validación de entrada y controles de privacidad. | Fase 2. | Pendiente |
 | 4. Persistencia | Modelo de datos para cartolas y movimientos normalizados, con política de retención de documentos. | Fase 3. | Pendiente |
 | 5. Nuevos formatos | Parsers aislados para nuevos productos o bancos, cada uno con su propia especificación y pruebas. | Fases 2 y 4. | Pendiente |
@@ -54,10 +57,10 @@ Los requisitos y límites exactos de esta fase están en
 
 ## Orden de trabajo
 
-La siguiente prioridad es la fase 2. Antes de ampliar el producto, se debe
-confirmar el contrato de ingesta con variaciones autorizadas del formato actual:
-documentos multipágina, cambios de orden de texto y cruces de año. Esto evita
-propagar errores de extracción a la API, la base de datos y las capas analíticas.
+La siguiente prioridad es la fase 3. Con el contrato de ingesta validado para
+las variantes sintéticas aprobadas, se puede definir un servicio de
+procesamiento con límites de entrada y controles de privacidad antes de añadir
+persistencia o una interfaz.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de
