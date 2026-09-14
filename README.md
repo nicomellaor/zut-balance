@@ -49,14 +49,18 @@ cuenta se enmascara antes de entregarse al consumidor.
 Inicie el servicio con:
 
 ```bash
+export ZUT_BALANCE_DATABASE_PATH="./zut-balance.sqlite3"
+export ZUT_BALANCE_API_KEY="un-secreto-largo-y-aleatorio"
 uvicorn zut_balance.api:app
 ```
 
 `GET /health` devuelve el estado operativo sin procesar cartolas. Para procesar
-un PDF, envíe un único campo multipart llamado `file` a `POST /v1/statements`:
+un PDF, envíe un único campo multipart llamado `file` y la API key a
+`POST /v1/statements`:
 
 ```bash
 curl -F "file=@media/cartola_ejemplo_banco_chile.pdf;type=application/pdf" \
+  -H "Authorization: Bearer $ZUT_BALANCE_API_KEY" \
   http://127.0.0.1:8000/v1/statements
 ```
 
@@ -71,14 +75,28 @@ las entradas inválidas o cartolas rechazadas devuelven `400`, los límites de
 tamaño o páginas devuelven `413` y los fallos inesperados devuelven `500`. Los
 mensajes no incluyen el contenido de la cartola ni detalles de implementación.
 
+La respuesta exitosa añade `statement_id`. Una carga con los mismos bytes de
+PDF reutiliza ese identificador y no duplica movimientos. Las rutas autenticadas
+adicionales son:
+
+- `GET /v1/statements/{statement_id}`: devuelve una cartola completa.
+- `GET /v1/statements?limit=50&offset=0`: lista metadatos, con `limit` entre 1
+  y 100, sin movimientos.
+- `DELETE /v1/statements/{statement_id}`: elimina permanentemente la cartola y
+  sus movimientos, y devuelve `204`.
+
 ## Límites y privacidad
 
 - La API acepta un PDF de hasta `10 MiB` y `20` páginas por solicitud. No exige
-  autenticación en esta fase.
-- No hay persistencia, interfaz gráfica, categorización, métricas, IA ni OCR.
-- El servicio no persiste PDFs ni resultados, y no ofrece recuperación de
-  solicitudes anteriores. El runtime puede usar almacenamiento temporal durante
-  una solicitud multipart; su limpieza corresponde al entorno de despliegue.
+  autenticación para `GET /health`; todas las rutas de datos requieren
+  `ZUT_BALANCE_API_KEY` mediante `Authorization: Bearer`.
+- SQLite guarda resultados normalizados hasta su eliminación explícita. Nunca
+  guarda el PDF original ni el texto extraído.
+- SQLite no cifra en reposo: el directorio y archivo configurados en
+  `ZUT_BALANCE_DATABASE_PATH` deben tener permisos restrictivos para el usuario
+  del servicio. El runtime puede usar almacenamiento temporal durante una carga
+  multipart; su limpieza corresponde al entorno de despliegue.
+- No hay interfaz gráfica, categorización, métricas, IA ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
@@ -92,3 +110,5 @@ mensajes no incluyen el contenido de la cartola ni detalles de implementación.
 - [Plan técnico de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/plan.md).
 - [Especificación del servicio de procesamiento](specs/processing-service/spec.md).
 - [Plan técnico del servicio de procesamiento](specs/processing-service/plan.md).
+- [Especificación de persistencia](specs/persistence/spec.md).
+- [Plan técnico de persistencia](specs/persistence/plan.md).

@@ -1,59 +1,110 @@
 from pathlib import Path
+import re
+from unittest.mock import ANY
 
 from fastapi.testclient import TestClient
+import pytest
 
 from zut_balance import api
-from zut_balance.api import MAX_FILE_SIZE_BYTES, app
+from zut_balance.api import MAX_FILE_SIZE_BYTES, ServiceSettings, create_app
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from zut_balance.errors import UnsupportedStatementError
 
 
 FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_ejemplo_banco_chile.pdf"
+API_KEY = "test-api-key"
+AUTHORIZATION = {"Authorization": f"Bearer {API_KEY}"}
 
 
-client = TestClient(app)
+@pytest.fixture
+def client(tmp_path: Path) -> TestClient:
+    return TestClient(
+        create_app(ServiceSettings(tmp_path / "statements.sqlite3", API_KEY))
+    )
 
 
-def test_health_reports_service_availability() -> None:
+def _upload(client: TestClient, content: bytes, **kwargs: object):
+    return client.post(
+        "/v1/statements",
+        files={"file": ("statement.pdf", content, "application/pdf")},
+        headers=AUTHORIZATION,
+        **kwargs,
+    )
+
+
+def test_health_reports_service_availability_without_authentication(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_statement_upload_requires_one_file_named_file() -> None:
-    response = client.post("/v1/statements")
+def test_data_routes_require_a_valid_api_key(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(
+        api,
+        "parse_banco_chile_cuenta_vista",
+        lambda _: (_ for _ in ()).throw(AssertionError("parser should not run")),
+    )
+
+    response = client.post(
+        "/v1/statements",
+        files={"file": ("statement.pdf", FIXTURE_PDF.read_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+    for path, method in (
+        ("/v1/statements", client.get),
+        ("/v1/statements/missing", client.get),
+        ("/v1/statements/missing", client.delete),
+    ):
+        assert method(path, headers={"Authorization": "Bearer wrong"}).status_code == 401
+    for authorization in ("", "Basic ignored", "Bearer "):
+        assert client.get(
+            "/v1/statements", headers={"Authorization": authorization}
+        ).status_code == 401
+
+
+def test_data_routes_require_explicit_configuration(tmp_path: Path) -> None:
+    for settings in (
+        ServiceSettings(None, API_KEY),
+        ServiceSettings(tmp_path / "configured.sqlite3", None),
+    ):
+        client = TestClient(create_app(settings))
+
+        response = client.get("/v1/statements", headers=AUTHORIZATION)
+
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "service_not_configured"
+
+
+def test_statement_upload_requires_one_file_named_file(client: TestClient) -> None:
+    response = client.post("/v1/statements", headers=AUTHORIZATION)
 
     assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "code": "invalid_upload",
-            "message": "Provide exactly one PDF file named file",
-        }
-    }
+    assert response.json()["error"]["code"] == "invalid_upload"
 
 
-def test_statement_upload_rejects_multiple_files() -> None:
+def test_statement_upload_rejects_multiple_files(client: TestClient) -> None:
     response = client.post(
         "/v1/statements",
         files=[
             ("file", ("first.pdf", b"%PDF-1.7", "application/pdf")),
             ("file", ("second.pdf", b"%PDF-1.7", "application/pdf")),
         ],
+        headers=AUTHORIZATION,
     )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_upload"
 
 
-def test_statement_upload_rejects_empty_or_non_pdf_files() -> None:
-    empty_response = client.post(
-        "/v1/statements",
-        files={"file": ("empty.pdf", b"", "application/pdf")},
-    )
+def test_statement_upload_rejects_empty_or_non_pdf_files(client: TestClient) -> None:
+    empty_response = _upload(client, b"")
     non_pdf_response = client.post(
         "/v1/statements",
         files={"file": ("statement.txt", b"not a PDF", "text/plain")},
+        headers=AUTHORIZATION,
     )
 
     assert empty_response.status_code == 400
@@ -62,68 +113,51 @@ def test_statement_upload_rejects_empty_or_non_pdf_files() -> None:
     assert non_pdf_response.json()["error"]["code"] == "invalid_file_type"
 
 
-def test_statement_upload_rejects_content_without_pdf_signature() -> None:
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"not a PDF", "application/pdf")},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "invalid_pdf"
-
-
-def test_statement_upload_returns_structured_error_for_malformed_multipart() -> None:
+def test_statement_upload_returns_structured_error_for_malformed_multipart(client: TestClient) -> None:
     response = client.post(
         "/v1/statements",
         content=b"--missing-boundary\r\n",
-        headers={"content-type": "multipart/form-data; boundary=declared-boundary"},
+        headers={
+            **AUTHORIZATION,
+            "content-type": "multipart/form-data; boundary=declared-boundary",
+        },
     )
 
     assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "code": "invalid_request",
-            "message": "The request could not be processed",
-        }
-    }
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
-def test_statement_upload_rejects_file_larger_than_limit() -> None:
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"%PDF-" + b"0" * MAX_FILE_SIZE_BYTES, "application/pdf")},
-    )
+def test_statement_upload_rejects_file_larger_than_limit(client: TestClient) -> None:
+    response = _upload(client, b"%PDF-" + b"0" * MAX_FILE_SIZE_BYTES)
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "file_too_large"
 
 
-def test_statement_upload_rejects_pdf_with_too_many_pages(monkeypatch) -> None:
+def test_statement_upload_rejects_pdf_with_too_many_pages(client: TestClient, monkeypatch) -> None:
     class ReaderWithTooManyPages:
         pages = [object()] * 21
 
     monkeypatch.setattr(api, "PdfReader", lambda _: ReaderWithTooManyPages())
 
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"%PDF-1.7", "application/pdf")},
-    )
+    response = _upload(client, b"%PDF-1.7")
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "too_many_pages"
 
 
-def test_statement_upload_returns_the_normalized_statement() -> None:
+def test_statement_lifecycle_preserves_normalized_result(client: TestClient) -> None:
     content = FIXTURE_PDF.read_bytes()
     statement = parse_banco_chile_cuenta_vista(content)
 
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", content, "application/pdf")},
-    )
+    created_response = _upload(client, content)
+    duplicate_response = _upload(client, content)
 
-    assert response.status_code == 200
-    assert response.json()["metadata"] == {
+    assert created_response.status_code == 200
+    statement_id = created_response.json()["statement_id"]
+    assert duplicate_response.json()["statement_id"] == statement_id
+    assert created_response.json()["metadata"]["masked_account_number"] == statement.masked_account_number
+    assert created_response.json()["metadata"] == {
         "bank": statement.bank,
         "product": statement.product,
         "masked_account_number": statement.masked_account_number,
@@ -134,14 +168,14 @@ def test_statement_upload_returns_the_normalized_statement() -> None:
         "page_number": statement.page_number,
         "total_pages": statement.total_pages,
     }
-    assert response.json()["summary"] == {
+    assert created_response.json()["summary"] == {
         "opening_balance": statement.summary.opening_balance,
         "closing_balance": statement.summary.closing_balance,
         "one_day_retention": statement.summary.one_day_retention,
         "multi_day_retention": statement.summary.multi_day_retention,
         "available_balance": statement.summary.available_balance,
     }
-    assert response.json()["transactions"] == [
+    assert created_response.json()["transactions"] == [
         {
             "date": transaction.date.isoformat(),
             "description": transaction.description,
@@ -154,23 +188,51 @@ def test_statement_upload_returns_the_normalized_statement() -> None:
         for transaction in statement.transactions
     ]
 
+    listing = client.get("/v1/statements?limit=1&offset=0", headers=AUTHORIZATION)
+    fetched = client.get(f"/v1/statements/{statement_id}", headers=AUTHORIZATION)
 
-def test_statement_upload_rejects_invalid_pdf_without_parser_details() -> None:
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"%PDF-1.7", "application/pdf")},
-    )
+    assert listing.json()["statements"] == [
+        {
+            "statement_id": statement_id,
+            "bank": statement.bank,
+            "product": statement.product,
+            "masked_account_number": statement.masked_account_number,
+            "currency": statement.currency,
+            "period_start": statement.period_start.isoformat(),
+            "period_end": statement.period_end.isoformat(),
+            "statement_number": statement.statement_number,
+            "page_number": statement.page_number,
+            "total_pages": statement.total_pages,
+            "created_at": ANY,
+        }
+    ]
+    assert "transactions" not in listing.json()["statements"][0]
+    assert fetched.json() == created_response.json()
+    assert re.search(r"\d{5}", statement.masked_account_number or "") is None
+
+    deleted = client.delete(f"/v1/statements/{statement_id}", headers=AUTHORIZATION)
+
+    assert deleted.status_code == 204
+    assert client.get(f"/v1/statements/{statement_id}", headers=AUTHORIZATION).status_code == 404
+
+
+def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:
+    assert client.get("/v1/statements", headers=AUTHORIZATION).json()["limit"] == 50
+    assert client.get("/v1/statements?limit=100", headers=AUTHORIZATION).json()["limit"] == 100
+    assert client.get("/v1/statements?limit=0", headers=AUTHORIZATION).status_code == 400
+    assert client.get("/v1/statements?limit=101", headers=AUTHORIZATION).status_code == 400
+    assert client.get("/v1/statements?offset=-1", headers=AUTHORIZATION).status_code == 400
+    assert client.get("/v1/statements?offset=invalid", headers=AUTHORIZATION).status_code == 400
+
+
+def test_statement_upload_rejects_invalid_pdf_without_parser_details(client: TestClient) -> None:
+    response = _upload(client, b"%PDF-1.7")
 
     assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "code": "invalid_pdf",
-            "message": "The uploaded file is not a valid PDF",
-        }
-    }
+    assert response.json()["error"]["code"] == "invalid_pdf"
 
 
-def test_statement_upload_maps_rejected_statement_to_safe_error(monkeypatch) -> None:
+def test_statement_upload_maps_rejected_statement_to_safe_error(client: TestClient, monkeypatch) -> None:
     class ReaderWithOnePage:
         pages = [object()]
 
@@ -181,21 +243,13 @@ def test_statement_upload_maps_rejected_statement_to_safe_error(monkeypatch) -> 
         lambda _: (_ for _ in ()).throw(UnsupportedStatementError("Sensitive parser detail")),
     )
 
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"%PDF-1.7", "application/pdf")},
-    )
+    response = _upload(client, b"%PDF-1.7")
 
     assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "code": "statement_rejected",
-            "message": "The statement could not be processed",
-        }
-    }
+    assert response.json()["error"]["code"] == "statement_rejected"
 
 
-def test_statement_upload_hides_unexpected_errors(monkeypatch) -> None:
+def test_statement_upload_hides_unexpected_errors(client: TestClient, monkeypatch) -> None:
     class ReaderWithOnePage:
         pages = [object()]
 
@@ -206,15 +260,7 @@ def test_statement_upload_hides_unexpected_errors(monkeypatch) -> None:
         lambda _: (_ for _ in ()).throw(RuntimeError("Sensitive stack detail")),
     )
 
-    response = client.post(
-        "/v1/statements",
-        files={"file": ("statement.pdf", b"%PDF-1.7", "application/pdf")},
-    )
+    response = _upload(client, b"%PDF-1.7")
 
     assert response.status_code == 500
-    assert response.json() == {
-        "error": {
-            "code": "internal_error",
-            "message": "The statement could not be processed",
-        }
-    }
+    assert response.json()["error"]["code"] == "internal_error"

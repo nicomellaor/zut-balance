@@ -28,14 +28,14 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1, 2 y 3 están completadas: existe una librería Python y un servicio
-HTTP para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el
-PDF, reconoce el formato, normaliza sus movimientos, enmascara la cuenta y
-exige conciliación general. La fase 2 añadió variantes sintéticas de varias
-páginas, períodos que cruzan de año, columnas desplazadas y metadatos
-reordenados. La fase 3 añadió carga HTTP validada con límites de tamaño y
-páginas, respuestas estructuradas y sin persistencia. No hay base de datos,
-interfaz, OCR, categorización ni IA.
+Las fases 1 a 4 están completadas: existe una librería Python y un servicio HTTP
+para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
+reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
+conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
+períodos que cruzan de año, columnas desplazadas y metadatos reordenados. La
+fase 3 añadió carga HTTP validada. La fase 4 persiste datos normalizados en
+SQLite, protegidos mediante API key y eliminables explícitamente, sin guardar
+PDFs originales. No hay interfaz, OCR, categorización ni IA.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -49,7 +49,7 @@ y
 | 1. Ingesta inicial | Parser determinista de Cuenta Vista Banco de Chile, validado con fixture sintético y conciliación. | Ninguna. | Completada |
 | 2. Robustecimiento de ingesta | Soporte aprobado para variantes sintéticas de layout, varias páginas y períodos que cruzan de año, respaldado por fixtures versionados. | Fase 1. | Completada |
 | 3. Servicio de procesamiento | API de carga y consulta con límites, validación de entrada y controles de privacidad. | Fase 2. | Completada |
-| 4. Persistencia | Modelo de datos para cartolas y movimientos normalizados, con política de retención de documentos. | Fase 3. | Pendiente |
+| 4. Persistencia | Modelo de datos para cartolas y movimientos normalizados, con política de retención de documentos. | Fase 3. | Completada |
 | 5. Nuevos formatos | Parsers aislados para nuevos productos o bancos, cada uno con su propia especificación y pruebas. | Fases 2 y 4. | Pendiente |
 | 6. Categorización | Normalización de comercios y reglas deterministas de categorías, con corrección por usuario como mejora posterior. | Fase 4. | Pendiente |
 | 7. Análisis | Métricas de gasto, variaciones, comercios principales y detección de recurrencias sobre datos categorizados. | Fase 6. | Pendiente |
@@ -59,10 +59,9 @@ y
 
 ## Orden de trabajo
 
-La siguiente prioridad es la fase 4. Con el servicio de procesamiento validado,
-se puede definir persistencia de cartolas y movimientos normalizados, incluida
-una política explícita de retención documental, antes de añadir nuevos formatos
-o una interfaz.
+La siguiente prioridad es la fase 5. Con la persistencia de movimientos
+normalizados disponible, se pueden añadir parsers aislados para nuevos productos
+o bancos, cada uno con su propia especificación y pruebas reproducibles.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de
