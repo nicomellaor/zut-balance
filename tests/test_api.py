@@ -10,6 +10,7 @@ import pytest
 from zut_balance import api
 from zut_balance.api import MAX_FILE_SIZE_BYTES, ServiceSettings, create_app
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
+from zut_balance.categorization import classify_transaction
 from zut_balance.errors import UnsupportedStatementError
 from zut_balance.persistence import DatabaseBusyError
 
@@ -34,6 +35,25 @@ def _upload(client: TestClient, content: bytes, **kwargs: object):
         headers=AUTHORIZATION,
         **kwargs,
     )
+
+
+def _transaction_response(transaction):
+    classification = classify_transaction(transaction, "")
+    return {
+        "date": transaction.date.isoformat(),
+        "description": transaction.description,
+        "document_number": transaction.document_number,
+        "branch_or_channel": transaction.branch_or_channel,
+        "amount": transaction.amount,
+        "movement_type": transaction.movement_type.value,
+        "reported_balance": transaction.reported_balance,
+        "classification": {
+            "category": classification.category.value,
+            "merchant_name": classification.merchant_name,
+            "rule_id": classification.rule_id,
+            "ruleset_version": classification.ruleset_version,
+        },
+    }
 
 
 def test_health_reports_service_availability_without_authentication(client: TestClient) -> None:
@@ -180,16 +200,7 @@ def test_statement_lifecycle_preserves_normalized_result(client: TestClient) -> 
         "available_balance": statement.summary.available_balance,
     }
     assert created_response.json()["transactions"] == [
-        {
-            "date": transaction.date.isoformat(),
-            "description": transaction.description,
-            "document_number": transaction.document_number,
-            "branch_or_channel": transaction.branch_or_channel,
-            "amount": transaction.amount,
-            "movement_type": transaction.movement_type.value,
-            "reported_balance": transaction.reported_balance,
-        }
-        for transaction in statement.transactions
+        _transaction_response(transaction) for transaction in statement.transactions
     ]
 
     listing = client.get("/v1/statements?limit=1&offset=0", headers=AUTHORIZATION)
@@ -248,16 +259,7 @@ def test_statement_upload_persists_v2_without_personal_details(client: TestClien
     assert created.json()["statement_id"] == duplicate.json()["statement_id"]
     assert created.json()["metadata"]["masked_account_number"] == expected.masked_account_number
     assert created.json()["transactions"] == [
-        {
-            "date": transaction.date.isoformat(),
-            "description": transaction.description,
-            "document_number": transaction.document_number,
-            "branch_or_channel": transaction.branch_or_channel,
-            "amount": transaction.amount,
-            "movement_type": transaction.movement_type.value,
-            "reported_balance": transaction.reported_balance,
-        }
-        for transaction in expected.transactions
+        _transaction_response(transaction) for transaction in expected.transactions
     ]
     response_text = created.text
     assert "Juan Alfonso Perez Lopez" not in response_text

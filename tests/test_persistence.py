@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from zut_balance import persistence
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from zut_balance.persistence import (
     DatabaseBusyError,
@@ -41,18 +42,30 @@ def test_schema_does_not_store_source_pdf_or_extracted_text(tmp_path: Path) -> N
     repository.initialize()
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
         statement_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(statements)")
         }
         transaction_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(transactions)")
         }
+        classification_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(transaction_classifications)")
+        }
 
     assert "pdf" not in statement_columns
     assert "source_pdf" not in statement_columns
     assert "extracted_text" not in statement_columns
     assert "extracted_text" not in transaction_columns
+    assert classification_columns == {
+        "transaction_id",
+        "merchant_name",
+        "merchant_key",
+        "category",
+        "rule_id",
+        "ruleset_version",
+        "classified_at",
+    }
 
 
 def test_repository_rejects_incompatible_schema_without_mutating_it(tmp_path: Path) -> None:
@@ -75,13 +88,13 @@ def test_repository_rejects_incompatible_schema_without_mutating_it(tmp_path: Pa
 def test_repository_rejects_unsupported_schema_versions_without_mutation(tmp_path: Path) -> None:
     database_path = tmp_path / "statements.sqlite3"
     with sqlite3.connect(database_path) as connection:
-        connection.execute("PRAGMA user_version = 2")
+        connection.execute("PRAGMA user_version = 3")
 
     with pytest.raises(IncompatibleSchemaError):
         StatementRepository(database_path).initialize()
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'statements'"
         ).fetchone() is None
@@ -97,6 +110,18 @@ def test_repository_rejects_incomplete_v1_schema_without_mutation(tmp_path: Path
 
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_repository_rejects_incomplete_v2_schema_without_mutation(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA user_version = 2")
+
+    with pytest.raises(IncompatibleSchemaError):
+        StatementRepository(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> None:
@@ -119,6 +144,62 @@ def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> 
 
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM transaction_classifications").fetchone()[0] == 0
+
+
+def test_repository_migrates_v1_data_to_v2_classifications(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    repository = StatementRepository(database_path)
+    repository.initialize()
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    stored = repository.save(statement, "f" * 64, datetime.now(UTC).isoformat())
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP TABLE transaction_classifications")
+        connection.execute("PRAGMA user_version = 1")
+
+    repository.initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == len(
+            statement.transactions
+        )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM transaction_classifications"
+        ).fetchone()[0] == len(statement.transactions)
+    assert all(transaction.classification is not None for transaction in repository.get(stored.id).statement.transactions)
+
+
+def test_repository_rolls_back_failed_v1_migration(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    repository = StatementRepository(database_path)
+    repository.initialize()
+    repository.save(
+        parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes()),
+        "g" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP TABLE transaction_classifications")
+        connection.execute("PRAGMA user_version = 1")
+
+    monkeypatch.setattr(
+        persistence,
+        "classify_transaction",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("classification failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="classification failed"):
+        repository.initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transaction_classifications'"
+        ).fetchone() is None
 
 
 def test_repository_deduplicates_concurrent_saves(tmp_path: Path) -> None:
@@ -173,3 +254,25 @@ def test_repository_rolls_back_failed_statement_insert(tmp_path: Path) -> None:
         repository.save(invalid_statement, "c" * 64, datetime.now(UTC).isoformat())
 
     assert repository.list_metadata(limit=100, offset=0) == ()
+
+
+def test_repository_rolls_back_failed_classification_insert(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    repository = StatementRepository(database_path)
+    repository.initialize()
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    monkeypatch.setattr(
+        persistence,
+        "classify_transaction",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("classification failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="classification failed"):
+        repository.save(statement, "h" * 64, datetime.now(UTC).isoformat())
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM transaction_classifications"
+        ).fetchone()[0] == 0

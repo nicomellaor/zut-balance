@@ -79,6 +79,16 @@ def _statement_response(statement: Statement, statement_id: str) -> JSONResponse
                     "amount": transaction.amount,
                     "movement_type": transaction.movement_type.value,
                     "reported_balance": transaction.reported_balance,
+                    "classification": (
+                        {
+                            "category": transaction.classification.category.value,
+                            "merchant_name": transaction.classification.merchant_name,
+                            "rule_id": transaction.classification.rule_id,
+                            "ruleset_version": transaction.classification.ruleset_version,
+                        }
+                        if transaction.classification is not None
+                        else None
+                    ),
                 }
                 for transaction in statement.transactions
             ],

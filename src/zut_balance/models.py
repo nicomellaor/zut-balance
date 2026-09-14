@@ -12,6 +12,35 @@ class MovementType(StrEnum):
     CREDIT = "credit"
 
 
+class Category(StrEnum):
+    """Deterministic categories assigned to normalized transactions."""
+
+    FOOD = "alimentacion"
+    TRANSPORT = "transporte"
+    HEALTH = "salud"
+    ENTERTAINMENT = "entretenimiento"
+    HOME = "hogar"
+    SERVICES = "servicios"
+    SHOPPING = "compras"
+    TRANSFERS = "transferencias"
+    FEES = "comisiones"
+    WITHDRAWALS = "retiros"
+    INCOME = "ingresos"
+    UNCATEGORIZED = "sin_categoria"
+
+
+@dataclass(frozen=True, slots=True)
+class Classification:
+    """A persisted deterministic classification for one transaction."""
+
+    category: Category
+    merchant_name: str | None
+    merchant_key: str | None
+    rule_id: str | None
+    ruleset_version: str
+    classified_at: str
+
+
 @dataclass(frozen=True, slots=True)
 class StatementSummary:
     """Balances and retentions reported by a statement, in CLP."""
@@ -50,6 +79,7 @@ class Transaction:
     amount: int
     movement_type: MovementType
     reported_balance: int | None
+    classification: Classification | None = None
 
 
 @dataclass(frozen=True, slots=True)

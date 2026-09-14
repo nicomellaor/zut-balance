@@ -16,7 +16,8 @@ Zut Balance incluye una librería y un servicio HTTP que procesan cartolas PDF
 digitales de Cuenta Vista de Banco de Chile. Soporta el layout inicial, la
 variante digital v2 validada y las variantes sintéticas documentadas de varias
 páginas, períodos que cruzan de año, columnas desplazadas y metadatos
-reordenados.
+reordenados. Cada movimiento persistido incorpora una clasificación determinista
+de categoría y comercio cuando una regla lo identifica.
 
 El parser devuelve una cartola normalizada y conciliada, o un error explícito
 si el PDF no es legible, está protegido, no contiene texto extraíble, no
@@ -101,7 +102,8 @@ adicionales son:
   versión de Zut Balance incompatible o futura, falla de forma segura sin
   modificarlo; use una ruta de base nueva o migre la instalación antes de
   reiniciar el servicio.
-- No hay interfaz gráfica, categorización, métricas, IA ni OCR.
+- Las categorías son reglas deterministas versionadas; no hay corrección manual,
+  clasificación por IA, métricas, interfaz gráfica ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
@@ -109,6 +111,7 @@ adicionales son:
 ## Documentación
 
 - [Roadmap del proyecto](docs/roadmap.md): visión, prioridades y fases futuras.
+- [Esquema de base de datos](docs/database-schema.md): tablas SQLite vigentes y la próxima migración planificada.
 - [Especificación de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/spec.md).
 - [Plan técnico de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/plan.md).
 - [Especificación de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/spec.md).

@@ -1,17 +1,18 @@
 """SQLite persistence for normalized bank statements."""
 
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime
 from pathlib import Path
 import sqlite3
 from contextlib import closing
 import time
 from uuid import uuid4
 
-from .models import MovementType, Statement, StatementSummary, Transaction
+from .categorization import classify_transaction
+from .models import Category, Classification, MovementType, Statement, StatementSummary, Transaction
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_LOCK_RETRIES = 3
 LOCK_RETRY_DELAY_SECONDS = 0.01
 
@@ -48,6 +49,17 @@ _TRANSACTION_COLUMNS = frozenset(
         "amount",
         "movement_type",
         "reported_balance",
+    }
+)
+_CLASSIFICATION_COLUMNS = frozenset(
+    {
+        "transaction_id",
+        "merchant_name",
+        "merchant_key",
+        "category",
+        "rule_id",
+        "ruleset_version",
+        "classified_at",
     }
 )
 
@@ -143,11 +155,16 @@ class StatementRepository:
                     """
                     )
                     self._validate_schema(connection)
-                    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                    connection.execute("PRAGMA user_version = 1")
+                    self._migrate_v1_to_v2(connection)
+                return
+            if version == 1:
+                with connection:
+                    self._migrate_v1_to_v2(connection)
                 return
             if version != SCHEMA_VERSION:
                 raise IncompatibleSchemaError("The database schema version is not supported")
-            self._validate_schema(connection)
+            self._validate_v2_schema(connection)
 
     def get(self, statement_id: str) -> StoredStatement | None:
         with closing(self._connect()) as connection:
@@ -169,6 +186,7 @@ class StatementRepository:
 
     def save(self, statement: Statement, source_sha256: str, created_at: str) -> StoredStatement:
         statement_id = str(uuid4())
+        classified_transactions: list[Transaction] = []
         with closing(self._connect()) as connection, connection:
             with connection:
                 connection.execute(
@@ -201,15 +219,15 @@ class StatementRepository:
                         statement.summary.available_balance,
                     ),
                 )
-                connection.executemany(
-                    """
+                for position, transaction in enumerate(statement.transactions):
+                    transaction_id = connection.execute(
+                        """
                     INSERT INTO transactions (
                         statement_id, position, transaction_date, description,
                         document_number, branch_or_channel, amount, movement_type,
                         reported_balance
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    [
                         (
                             statement_id,
                             position,
@@ -220,11 +238,30 @@ class StatementRepository:
                             transaction.amount,
                             transaction.movement_type.value,
                             transaction.reported_balance,
-                        )
-                        for position, transaction in enumerate(statement.transactions)
-                    ],
-                )
-        return StoredStatement(statement_id, statement)
+                        ),
+                    ).lastrowid
+                    classification = classify_transaction(transaction, created_at)
+                    connection.execute(
+                        """
+                        INSERT INTO transaction_classifications (
+                            transaction_id, merchant_name, merchant_key, category,
+                            rule_id, ruleset_version, classified_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            transaction_id,
+                            classification.merchant_name,
+                            classification.merchant_key,
+                            classification.category.value,
+                            classification.rule_id,
+                            classification.ruleset_version,
+                            classification.classified_at,
+                        ),
+                    )
+                    classified_transactions.append(
+                        replace(transaction, classification=classification)
+                    )
+        return StoredStatement(statement_id, replace(statement, transactions=tuple(classified_transactions)))
 
     def save_or_get(
         self, statement: Statement, source_sha256: str, created_at: str
@@ -299,6 +336,77 @@ class StatementRepository:
         if not cls._has_statement_cascade(connection):
             raise IncompatibleSchemaError("The transaction cascade is missing")
 
+    @classmethod
+    def _migrate_v1_to_v2(cls, connection: sqlite3.Connection) -> None:
+        cls._validate_schema(connection)
+        connection.execute("BEGIN")
+        connection.execute(
+            """
+            CREATE TABLE transaction_classifications (
+                transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+                merchant_name TEXT,
+                merchant_key TEXT,
+                category TEXT NOT NULL,
+                rule_id TEXT,
+                ruleset_version TEXT NOT NULL,
+                classified_at TEXT NOT NULL
+            )
+            """
+        )
+        classified_at = datetime.now(UTC).isoformat()
+        for row in connection.execute(
+            """
+            SELECT id, transaction_date, description, document_number, branch_or_channel,
+                   amount, movement_type, reported_balance
+            FROM transactions
+            """
+        ):
+            transaction = Transaction(
+                date=date.fromisoformat(row["transaction_date"]),
+                description=row["description"],
+                document_number=row["document_number"],
+                branch_or_channel=row["branch_or_channel"],
+                amount=row["amount"],
+                movement_type=MovementType(row["movement_type"]),
+                reported_balance=row["reported_balance"],
+            )
+            classification = classify_transaction(transaction, classified_at)
+            connection.execute(
+                """
+                INSERT INTO transaction_classifications (
+                    transaction_id, merchant_name, merchant_key, category,
+                    rule_id, ruleset_version, classified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    classification.merchant_name,
+                    classification.merchant_key,
+                    classification.category.value,
+                    classification.rule_id,
+                    classification.ruleset_version,
+                    classification.classified_at,
+                ),
+            )
+        cls._validate_v2_schema(connection)
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @classmethod
+    def _validate_v2_schema(cls, connection: sqlite3.Connection) -> None:
+        cls._validate_schema(connection)
+        if not cls._table_exists(connection, "transaction_classifications"):
+            raise IncompatibleSchemaError("The classifications schema is incomplete")
+        if cls._column_names(connection, "transaction_classifications") != _CLASSIFICATION_COLUMNS:
+            raise IncompatibleSchemaError("The classifications schema is not supported")
+        if not cls._has_cascade(
+            connection,
+            "transaction_classifications",
+            "transaction_id",
+            "transactions",
+            "id",
+        ):
+            raise IncompatibleSchemaError("The classification cascade is missing")
+
     @staticmethod
     def _column_names(connection: sqlite3.Connection, table_name: str) -> frozenset[str]:
         return frozenset(row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})"))
@@ -320,12 +428,24 @@ class StatementRepository:
 
     @staticmethod
     def _has_statement_cascade(connection: sqlite3.Connection) -> bool:
+        return StatementRepository._has_cascade(
+            connection, "transactions", "statement_id", "statements", "id"
+        )
+
+    @staticmethod
+    def _has_cascade(
+        connection: sqlite3.Connection,
+        table_name: str,
+        source_column: str,
+        target_table: str,
+        target_column: str,
+    ) -> bool:
         return any(
-            foreign_key["table"] == "statements"
-            and foreign_key["from"] == "statement_id"
-            and foreign_key["to"] == "id"
+            foreign_key["table"] == target_table
+            and foreign_key["from"] == source_column
+            and foreign_key["to"] == target_column
             and foreign_key["on_delete"] == "CASCADE"
-            for foreign_key in connection.execute("PRAGMA foreign_key_list(transactions)")
+            for foreign_key in connection.execute(f"PRAGMA foreign_key_list({table_name})")
         )
 
     @staticmethod
@@ -335,7 +455,19 @@ class StatementRepository:
     @staticmethod
     def _stored_statement(connection: sqlite3.Connection, row: sqlite3.Row) -> StoredStatement:
         transactions = connection.execute(
-            "SELECT * FROM transactions WHERE statement_id = ? ORDER BY position",
+            """
+            SELECT transactions.*, transaction_classifications.merchant_name,
+                   transaction_classifications.merchant_key,
+                   transaction_classifications.category,
+                   transaction_classifications.rule_id,
+                   transaction_classifications.ruleset_version,
+                   transaction_classifications.classified_at
+            FROM transactions
+            JOIN transaction_classifications
+            ON transaction_classifications.transaction_id = transactions.id
+            WHERE statement_id = ?
+            ORDER BY position
+            """,
             (row["id"],),
         ).fetchall()
         return StoredStatement(
@@ -366,6 +498,14 @@ class StatementRepository:
                         amount=transaction["amount"],
                         movement_type=MovementType(transaction["movement_type"]),
                         reported_balance=transaction["reported_balance"],
+                        classification=Classification(
+                            category=Category(transaction["category"]),
+                            merchant_name=transaction["merchant_name"],
+                            merchant_key=transaction["merchant_key"],
+                            rule_id=transaction["rule_id"],
+                            ruleset_version=transaction["ruleset_version"],
+                            classified_at=transaction["classified_at"],
+                        ),
                     )
                     for transaction in transactions
                 ),
