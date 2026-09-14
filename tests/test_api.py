@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import ANY
 
 from fastapi.testclient import TestClient
@@ -9,6 +11,7 @@ from zut_balance import api
 from zut_balance.api import MAX_FILE_SIZE_BYTES, ServiceSettings, create_app
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from zut_balance.errors import UnsupportedStatementError
+from zut_balance.persistence import DatabaseBusyError
 
 
 FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_ejemplo_banco_chile.pdf"
@@ -216,6 +219,23 @@ def test_statement_lifecycle_preserves_normalized_result(client: TestClient) -> 
     assert client.get(f"/v1/statements/{statement_id}", headers=AUTHORIZATION).status_code == 404
 
 
+def test_concurrent_statement_uploads_reuse_the_same_record(client: TestClient) -> None:
+    barrier = Barrier(2)
+    content = FIXTURE_PDF.read_bytes()
+
+    def upload() -> object:
+        barrier.wait()
+        return _upload(client, content)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = tuple(executor.map(lambda _: upload(), range(2)))
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["statement_id"] == second.json()["statement_id"]
+    listing = client.get("/v1/statements", headers=AUTHORIZATION).json()["statements"]
+    assert [item["statement_id"] for item in listing] == [first.json()["statement_id"]]
+
+
 def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:
     assert client.get("/v1/statements", headers=AUTHORIZATION).json()["limit"] == 50
     assert client.get("/v1/statements?limit=100", headers=AUTHORIZATION).json()["limit"] == 100
@@ -264,3 +284,20 @@ def test_statement_upload_hides_unexpected_errors(client: TestClient, monkeypatc
 
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "internal_error"
+
+
+def test_statement_upload_hides_database_lock_details(client: TestClient, monkeypatch) -> None:
+    def busy(*_: object) -> object:
+        raise DatabaseBusyError("database is locked for account 123456789")
+
+    monkeypatch.setattr(api.StatementRepository, "save_or_get", busy)
+
+    response = _upload(client, FIXTURE_PDF.read_bytes())
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "database_busy",
+            "message": "The data service is temporarily unavailable",
+        }
+    }

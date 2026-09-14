@@ -5,12 +5,63 @@ from datetime import date
 from pathlib import Path
 import sqlite3
 from contextlib import closing
+import time
 from uuid import uuid4
 
 from .models import MovementType, Statement, StatementSummary, Transaction
 
 
 SCHEMA_VERSION = 1
+MAX_LOCK_RETRIES = 3
+LOCK_RETRY_DELAY_SECONDS = 0.01
+
+_STATEMENT_COLUMNS = frozenset(
+    {
+        "id",
+        "source_sha256",
+        "created_at",
+        "bank",
+        "product",
+        "masked_account_number",
+        "currency",
+        "period_start",
+        "period_end",
+        "statement_number",
+        "page_number",
+        "total_pages",
+        "opening_balance",
+        "closing_balance",
+        "one_day_retention",
+        "multi_day_retention",
+        "available_balance",
+    }
+)
+_TRANSACTION_COLUMNS = frozenset(
+    {
+        "id",
+        "statement_id",
+        "position",
+        "transaction_date",
+        "description",
+        "document_number",
+        "branch_or_channel",
+        "amount",
+        "movement_type",
+        "reported_balance",
+    }
+)
+
+
+class PersistenceError(RuntimeError):
+    """Base class for expected persistence failures."""
+
+
+class IncompatibleSchemaError(PersistenceError):
+    """Raised when a database does not match the supported schema."""
+
+
+class DatabaseBusyError(PersistenceError):
+    """Raised when bounded retries cannot acquire SQLite's write lock."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,13 +92,18 @@ class StatementRepository:
         self._database_path = str(database_path)
 
     def initialize(self) -> None:
-        with closing(self._connect()) as connection, connection:
+        with closing(self._connect()) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             if version > SCHEMA_VERSION:
-                raise RuntimeError("The database schema version is not supported")
+                raise IncompatibleSchemaError("The database schema version is not supported")
             if version == 0:
-                connection.executescript(
-                    """
+                if self._table_exists(connection, "statements") or self._table_exists(
+                    connection, "transactions"
+                ):
+                    raise IncompatibleSchemaError("The database schema is incomplete")
+                with connection:
+                    connection.executescript(
+                        """
                     CREATE TABLE IF NOT EXISTS statements (
                         id TEXT PRIMARY KEY,
                         source_sha256 TEXT NOT NULL UNIQUE,
@@ -85,8 +141,13 @@ class StatementRepository:
                     CREATE INDEX IF NOT EXISTS transactions_statement_position
                     ON transactions(statement_id, position);
                     """
-                )
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                    )
+                    self._validate_schema(connection)
+                    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                return
+            if version != SCHEMA_VERSION:
+                raise IncompatibleSchemaError("The database schema version is not supported")
+            self._validate_schema(connection)
 
     def get(self, statement_id: str) -> StoredStatement | None:
         with closing(self._connect()) as connection:
@@ -168,16 +229,23 @@ class StatementRepository:
     def save_or_get(
         self, statement: Statement, source_sha256: str, created_at: str
     ) -> tuple[StoredStatement, bool]:
-        existing = self.get_by_hash(source_sha256)
-        if existing is not None:
-            return existing, False
-        try:
-            return self.save(statement, source_sha256, created_at), True
-        except sqlite3.IntegrityError:
-            existing = self.get_by_hash(source_sha256)
-            if existing is not None:
-                return existing, False
-            raise
+        for attempt in range(MAX_LOCK_RETRIES + 1):
+            try:
+                existing = self.get_by_hash(source_sha256)
+                if existing is not None:
+                    return existing, False
+                try:
+                    return self.save(statement, source_sha256, created_at), True
+                except sqlite3.IntegrityError:
+                    # A competing request committed the same unique hash.
+                    continue
+            except sqlite3.OperationalError as error:
+                if not self._is_transient_lock(error):
+                    raise
+                if attempt == MAX_LOCK_RETRIES:
+                    raise DatabaseBusyError("The SQLite database is busy") from error
+                time.sleep(LOCK_RETRY_DELAY_SECONDS)
+        raise DatabaseBusyError("The SQLite database is busy")
 
     def list_metadata(self, limit: int, offset: int) -> tuple[StoredStatementMetadata, ...]:
         with closing(self._connect()) as connection:
@@ -207,6 +275,62 @@ class StatementRepository:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    @staticmethod
+    def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+        return connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
+        ).fetchone() is not None
+
+    @classmethod
+    def _validate_schema(cls, connection: sqlite3.Connection) -> None:
+        if not cls._table_exists(connection, "statements") or not cls._table_exists(
+            connection, "transactions"
+        ):
+            raise IncompatibleSchemaError("The database schema is incomplete")
+        if cls._column_names(connection, "statements") != _STATEMENT_COLUMNS:
+            raise IncompatibleSchemaError("The statements schema is not supported")
+        if cls._column_names(connection, "transactions") != _TRANSACTION_COLUMNS:
+            raise IncompatibleSchemaError("The transactions schema is not supported")
+        if not cls._has_unique_index(connection, "statements", ("source_sha256",)):
+            raise IncompatibleSchemaError("The statements hash constraint is missing")
+        if not cls._has_unique_index(connection, "transactions", ("statement_id", "position")):
+            raise IncompatibleSchemaError("The transaction position constraint is missing")
+        if not cls._has_statement_cascade(connection):
+            raise IncompatibleSchemaError("The transaction cascade is missing")
+
+    @staticmethod
+    def _column_names(connection: sqlite3.Connection, table_name: str) -> frozenset[str]:
+        return frozenset(row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})"))
+
+    @staticmethod
+    def _has_unique_index(
+        connection: sqlite3.Connection, table_name: str, columns: tuple[str, ...]
+    ) -> bool:
+        for index in connection.execute(f"PRAGMA index_list({table_name})"):
+            if not index["unique"]:
+                continue
+            index_columns = tuple(
+                row["name"]
+                for row in connection.execute(f"PRAGMA index_info({index['name']})")
+            )
+            if index_columns == columns:
+                return True
+        return False
+
+    @staticmethod
+    def _has_statement_cascade(connection: sqlite3.Connection) -> bool:
+        return any(
+            foreign_key["table"] == "statements"
+            and foreign_key["from"] == "statement_id"
+            and foreign_key["to"] == "id"
+            and foreign_key["on_delete"] == "CASCADE"
+            for foreign_key in connection.execute("PRAGMA foreign_key_list(transactions)")
+        )
+
+    @staticmethod
+    def _is_transient_lock(error: sqlite3.OperationalError) -> bool:
+        return "locked" in str(error).lower() or "busy" in str(error).lower()
 
     @staticmethod
     def _stored_statement(connection: sqlite3.Connection, row: sqlite3.Row) -> StoredStatement:

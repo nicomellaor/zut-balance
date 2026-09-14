@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
 from .models import Statement
-from .persistence import StatementRepository, StoredStatementMetadata
+from .persistence import DatabaseBusyError, StatementRepository, StoredStatementMetadata
 
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
@@ -169,9 +169,6 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
             return _error_response(413, "too_many_pages", "The uploaded PDF exceeds the 20 page limit")
 
         source_sha256 = sha256(content).hexdigest()
-        existing = repository.get_by_hash(source_sha256)
-        if existing is not None:
-            return _statement_response(existing.statement, existing.id)
         try:
             statement = parse_banco_chile_cuenta_vista(content)
             stored, _ = repository.save_or_get(
@@ -182,6 +179,12 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
             return _statement_response(stored.statement, stored.id)
         except StatementError:
             return _error_response(400, "statement_rejected", "The statement could not be processed")
+        except DatabaseBusyError:
+            return _error_response(
+                503,
+                "database_busy",
+                "The data service is temporarily unavailable",
+            )
         except Exception:
             return _error_response(500, "internal_error", "The statement could not be processed")
 

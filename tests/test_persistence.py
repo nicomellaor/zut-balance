@@ -1,12 +1,18 @@
 from datetime import UTC, datetime
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 
 import pytest
 
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
-from zut_balance.persistence import StatementRepository
+from zut_balance.persistence import (
+    DatabaseBusyError,
+    IncompatibleSchemaError,
+    MAX_LOCK_RETRIES,
+    StatementRepository,
+)
 
 
 FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_ejemplo_banco_chile.pdf"
@@ -25,6 +31,8 @@ def test_repository_round_trips_normalized_statement(tmp_path: Path) -> None:
 
     assert repository.get(stored.id) == stored
     assert repository.get_by_hash("a" * 64) == stored
+    repository.initialize()
+    assert repository.get(stored.id) == stored
 
 
 def test_schema_does_not_store_source_pdf_or_extracted_text(tmp_path: Path) -> None:
@@ -33,6 +41,7 @@ def test_schema_does_not_store_source_pdf_or_extracted_text(tmp_path: Path) -> N
     repository.initialize()
 
     with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
         statement_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(statements)")
         }
@@ -44,6 +53,50 @@ def test_schema_does_not_store_source_pdf_or_extracted_text(tmp_path: Path) -> N
     assert "source_pdf" not in statement_columns
     assert "extracted_text" not in statement_columns
     assert "extracted_text" not in transaction_columns
+
+
+def test_repository_rejects_incompatible_schema_without_mutating_it(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE statements (id TEXT PRIMARY KEY, legacy_value TEXT)")
+        connection.execute("INSERT INTO statements VALUES ('legacy', 'preserve')")
+
+    with pytest.raises(IncompatibleSchemaError):
+        StatementRepository(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert connection.execute("SELECT * FROM statements").fetchone() == ("legacy", "preserve")
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transactions'"
+        ).fetchone() is None
+
+
+def test_repository_rejects_unsupported_schema_versions_without_mutation(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA user_version = 2")
+
+    with pytest.raises(IncompatibleSchemaError):
+        StatementRepository(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'statements'"
+        ).fetchone() is None
+
+
+def test_repository_rejects_incomplete_v1_schema_without_mutation(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+
+    with pytest.raises(IncompatibleSchemaError):
+        StatementRepository(database_path).initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
 
 
 def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> None:
@@ -66,6 +119,47 @@ def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> 
 
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
+
+
+def test_repository_deduplicates_concurrent_saves(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    StatementRepository(database_path).initialize()
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    created_at = datetime.now(UTC).isoformat()
+
+    def save() -> tuple[object, bool]:
+        return StatementRepository(database_path).save_or_get(statement, "d" * 64, created_at)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = tuple(executor.map(lambda _: save(), range(2)))
+
+    assert first[0] == second[0]
+    assert sorted((first[1], second[1])) == [False, True]
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == len(
+            statement.transactions
+        )
+
+
+def test_repository_fails_after_bounded_database_lock_retries(tmp_path: Path, monkeypatch) -> None:
+    repository = StatementRepository(tmp_path / "statements.sqlite3")
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    attempts = 0
+
+    monkeypatch.setattr(repository, "get_by_hash", lambda _: None)
+
+    def locked_save(*_: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(repository, "save", locked_save)
+
+    with pytest.raises(DatabaseBusyError):
+        repository.save_or_get(statement, "e" * 64, datetime.now(UTC).isoformat())
+
+    assert attempts == MAX_LOCK_RETRIES + 1
 
 
 def test_repository_rolls_back_failed_statement_insert(tmp_path: Path) -> None:

@@ -96,6 +96,10 @@ adicionales son:
   `ZUT_BALANCE_DATABASE_PATH` deben tener permisos restrictivos para el usuario
   del servicio. El runtime puede usar almacenamiento temporal durante una carga
   multipart; su limpieza corresponde al entorno de despliegue.
+- El servicio valida el esquema SQLite al iniciar. Si el archivo contiene una
+  versión de Zut Balance incompatible o futura, falla de forma segura sin
+  modificarlo; use una ruta de base nueva o migre la instalación antes de
+  reiniciar el servicio.
 - No hay interfaz gráfica, categorización, métricas, IA ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
