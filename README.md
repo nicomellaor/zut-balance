@@ -13,9 +13,10 @@ e insights. La visión, las fases y sus dependencias están en
 ## Estado actual
 
 Zut Balance incluye una librería y un servicio HTTP que procesan cartolas PDF
-digitales de Cuenta Vista de Banco de Chile. Soporta el layout inicial y las
-variantes sintéticas documentadas de varias páginas, períodos que cruzan de año,
-columnas desplazadas y metadatos reordenados.
+digitales de Cuenta Vista de Banco de Chile. Soporta el layout inicial, la
+variante digital v2 validada y las variantes sintéticas documentadas de varias
+páginas, períodos que cruzan de año, columnas desplazadas y metadatos
+reordenados.
 
 El parser devuelve una cartola normalizada y conciliada, o un error explícito
 si el PDF no es legible, está protegido, no contiene texto extraíble, no
@@ -116,3 +117,5 @@ adicionales son:
 - [Plan técnico del servicio de procesamiento](specs/processing-service/plan.md).
 - [Especificación de persistencia](specs/persistence/spec.md).
 - [Plan técnico de persistencia](specs/persistence/plan.md).
+- [Especificación del layout v2](specs/banco-chile-cuenta-vista-v2/spec.md).
+- [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).

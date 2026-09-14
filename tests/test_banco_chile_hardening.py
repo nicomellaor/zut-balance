@@ -5,7 +5,11 @@ import re
 
 import pytest
 
-from zut_balance import UnreliableExtractionError, parse_banco_chile_cuenta_vista
+from zut_balance import (
+    UnreliableExtractionError,
+    UnsupportedStatementError,
+    parse_banco_chile_cuenta_vista,
+)
 from zut_balance.banco_chile_cuenta_vista import (
     _validate_document_evidence,
     extract_statement_metadata,
@@ -19,6 +23,7 @@ MULTIPAGE_PDF = FIXTURES / "cartola_banco_chile_multipagina.pdf"
 CROSS_YEAR_PDF = FIXTURES / "cartola_banco_chile_cruce_anio.pdf"
 SHIFTED_COLUMNS_PDF = FIXTURES / "cartola_banco_chile_columnas_desplazadas.pdf"
 REORDERED_METADATA_PDF = FIXTURES / "cartola_banco_chile_metadatos_reordenados.pdf"
+V2_PDF = Path(__file__).parents[1] / "media" / "cartola_v2_ejemplo_banco_chile.pdf"
 
 
 def test_parse_multipage_statement_combines_sections_and_transactions() -> None:
@@ -165,6 +170,22 @@ def test_transaction_extraction_rejects_reordered_columns() -> None:
     )
 
     with pytest.raises(UnreliableExtractionError, match="columns are ambiguous"):
+        extract_transactions(altered_pages, metadata.period_start, metadata.period_end)
+
+
+def test_v2_rejects_missing_required_column_marker() -> None:
+    pages = extract_pdf_text(V2_PDF.read_bytes())
+    altered_pages = (pages[0].replace("MONTO DEPOSITOS", "MONTO"),)
+
+    with pytest.raises(UnsupportedStatementError, match="does not match"):
+        extract_transactions(altered_pages, date(2026, 6, 30), date(2026, 7, 31))
+
+
+def test_v2_rejects_incomplete_transaction_row() -> None:
+    pages = extract_pdf_text(V2_PDF.read_bytes())
+    metadata = extract_statement_metadata(pages)
+    altered_pages = (pages[0].replace("19.800", "      ", 1),)
+    with pytest.raises(UnreliableExtractionError, match="row is incomplete"):
         extract_transactions(altered_pages, metadata.period_start, metadata.period_end)
 
 

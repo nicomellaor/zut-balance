@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from .models import MovementType, Statement, StatementMetadata, StatementSummary
 from .pdf_validation import extract_pdf_text
 
 
-_REQUIRED_MARKERS = (
+_ORIGINAL_REQUIRED_MARKERS = (
     "BANCO DE CHILE",
     "ESTADO DE CUENTA",
     "CUENTA VISTA",
@@ -20,6 +20,23 @@ _REQUIRED_MARKERS = (
     "DIA/MES",
     "DETALLE DE TRANSACCION",
     "CARGOS",
+    "SALDO",
+)
+_V2_REQUIRED_MARKERS = (
+    "ESTADO DE CUENTA",
+    "CUENTA VISTA",
+    "EJECUTIVO DE CUENTA",
+    "DE CUENTA",
+    "MONEDA",
+    "CARTOLA N",
+    "DESDE",
+    "HASTA",
+    "FECHA",
+    "DIA/MES",
+    "DETALLE DE TRANSACCION",
+    "SUCURSAL",
+    "MONTO CARGOS",
+    "MONTO DEPOSITOS",
     "SALDO",
 )
 _MONEY_PATTERN = r"\d{1,3}(?:\.\d{3})*|\d+"
@@ -37,11 +54,15 @@ class _Page:
 @dataclass(frozen=True)
 class _TransactionColumns:
     description_start: int
+    description_end: int
     document_start: int
+    document_end: int
     branch_start: int
+    branch_end: int
     monetary_start: int
     credit_start: int
     balance_start: int
+    branch_before_document: bool
 
 
 @dataclass
@@ -61,6 +82,14 @@ def parse_banco_chile_cuenta_vista(pdf: bytes | str | Path) -> Statement:
     pages = extract_pdf_text(pdf_content)
     validate_banco_chile_cuenta_vista_format(pages)
     metadata = extract_statement_metadata(pages)
+    if metadata.masked_account_number is None:
+        metadata = replace(
+            metadata,
+            masked_account_number=_consistent_optional_value(
+                [_extract_masked_account_number(page) for page in extract_pdf_text(pdf_content, extraction_mode=None)],
+                "account number",
+            ),
+        )
     transactions = extract_transactions(pages, metadata.period_start, metadata.period_end)
     _validate_document_evidence(pages, transactions)
     validate_statement_completeness_and_reconciliation(metadata, transactions)
@@ -92,11 +121,8 @@ def _read_pdf_content(pdf: bytes | str | Path) -> bytes:
 def validate_banco_chile_cuenta_vista_format(pages: tuple[str, ...]) -> None:
     """Raise when extracted pages do not match the supported statement layout."""
     document_text = _normalize_document_text(pages)
-    missing_markers = [
-        marker for marker in _REQUIRED_MARKERS if marker not in document_text
-    ]
-    if missing_markers or (
-        "ABONOS" not in document_text and "DEPOSITOS" not in document_text
+    if not _has_required_markers(document_text, _ORIGINAL_REQUIRED_MARKERS) and not _has_required_markers(
+        document_text, _V2_REQUIRED_MARKERS
     ):
         raise UnsupportedStatementError(
             "The PDF does not match the Banco de Chile Cuenta Vista format"
@@ -237,7 +263,7 @@ def _analyze_pages(pages: tuple[str, ...]) -> tuple[_Page, ...]:
 
 
 def _page_marker(page: str, position: int) -> int | None:
-    match = re.search(r"N[°ºO]\s*DE\s*PAGINA\s*:\s*(\d+)\s+DE\s+(\d+)", page, re.IGNORECASE)
+    match = re.search(r"N[°ºO]\s*DE\s*PAGINA\s*:\s*(\d+)\s+DE\s*(\d+)", page, re.IGNORECASE)
     return int(match.group(position)) if match else None
 
 
@@ -257,7 +283,12 @@ def _extract_transaction_rows(pages: tuple[_Page, ...]) -> list[_TransactionRow]
             continue
 
         lines = page.text.splitlines()
-        columns = _transaction_columns(lines[page.table_header_index])
+        table_header = lines[page.table_header_index]
+        if "DETALLE DE TRANSACCION" not in table_header.upper():
+            if page.table_header_index == 0:
+                raise UnreliableExtractionError("The transaction columns could not be located")
+            table_header = lines[page.table_header_index - 1]
+        columns = _transaction_columns(table_header)
         for line in lines[page.table_header_index + 1 :]:
             if "SALDO FINAL" in _normalize_document_text((line,)):
                 break
@@ -270,7 +301,7 @@ def _extract_transaction_rows(pages: tuple[_Page, ...]) -> list[_TransactionRow]
             if match is None:
                 _append_description_continuation(rows, line, columns)
                 continue
-            rows.append(_parse_transaction_row(line, match.group(1), columns))
+            rows.append(_parse_transaction_row(line, match.group(1), match.end(), columns))
     return rows
 
 
@@ -287,8 +318,8 @@ def _transaction_columns(header: str) -> _TransactionColumns:
         "description": r"DETALLE\s+DE\s+TRANSACCION",
         "document": r"N[°ºO]\s*DOCTO",
         "branch": r"SUCURSAL",
-        "debit": r"CARGOS",
-        "credit": r"O\s+ABONOS",
+        "debit": r"(?:MONTO\s+)?CARGOS",
+        "credit": r"(?:MONTO\s+DEPOSITOS|O\s+ABONOS)",
         "balance": r"SALDO",
     }
     positions = {}
@@ -298,21 +329,36 @@ def _transaction_columns(header: str) -> _TransactionColumns:
             raise UnreliableExtractionError("The transaction columns could not be located")
         positions[name] = match.start()
 
-    ordered = [positions[name] for name in ("description", "document", "branch", "debit", "credit", "balance")]
+    text_columns = sorted((positions["document"], positions["branch"]))
+    ordered = [positions["description"], *text_columns, positions["debit"], positions["credit"], positions["balance"]]
     if ordered != sorted(ordered) or len(set(ordered)) != len(ordered):
         raise UnreliableExtractionError("The transaction columns are ambiguous")
+    if positions["branch"] < positions["document"]:
+        branch_start = (positions["description"] + positions["branch"]) // 2
+        branch_end = (positions["branch"] + positions["document"]) // 2
+        document_start = branch_end
+        document_end = (positions["document"] + positions["debit"]) // 2
+    else:
+        branch_start = positions["branch"]
+        branch_end = positions["debit"]
+        document_start = positions["document"]
+        document_end = positions["branch"]
     return _TransactionColumns(
         description_start=positions["description"],
-        document_start=positions["document"],
-        branch_start=positions["branch"],
-        monetary_start=(positions["branch"] + positions["debit"]) // 2,
+        description_end=text_columns[0],
+        document_start=document_start,
+        document_end=document_end,
+        branch_start=branch_start,
+        branch_end=branch_end,
+        monetary_start=(text_columns[-1] + positions["debit"]) // 2,
         credit_start=positions["credit"],
         balance_start=positions["balance"],
+        branch_before_document=positions["branch"] < positions["document"],
     )
 
 
 def _parse_transaction_row(
-    line: str, day_month: str, columns: _TransactionColumns
+    line: str, day_month: str, description_start: int, columns: _TransactionColumns
 ) -> _TransactionRow:
     values = list(re.finditer(_MONEY_PATTERN, line[columns.monetary_start :]))
     if not values:
@@ -322,11 +368,21 @@ def _parse_transaction_row(
 
     amount_match = values[0]
     amount_position = columns.monetary_start + amount_match.start()
+    description = _clean_cell(line[description_start : columns.description_end])
+    document_number = _optional_cell(line[columns.document_start : columns.document_end])
+    branch_or_channel = _optional_cell(line[columns.branch_start : columns.branch_end])
+    if columns.branch_before_document:
+        cells = re.split(r"\s{2,}", line.strip())
+        if len(cells) != 5 or cells[0] != day_month:
+            raise UnreliableExtractionError("A transaction row is incomplete")
+        description = cells[1]
+        document_number = None
+        branch_or_channel = cells[2]
     return _TransactionRow(
         day_month=day_month,
-        description=_clean_cell(line[columns.description_start : columns.document_start]),
-        document_number=_optional_cell(line[columns.document_start : columns.branch_start]),
-        branch_or_channel=_optional_cell(line[columns.branch_start : columns.monetary_start]),
+        description=description,
+        document_number=document_number,
+        branch_or_channel=branch_or_channel,
         amount=_parse_clp(amount_match.group()),
         movement_type=(
             MovementType.DEBIT
@@ -344,7 +400,9 @@ def _append_description_continuation(
         return
     if re.search(_MONEY_PATTERN, line[columns.monetary_start :]):
         raise UnreliableExtractionError("A transaction continuation contains monetary data")
-    if _clean_cell(line[columns.document_start :]):
+    if _clean_cell(line[columns.document_start : columns.document_end]) or _clean_cell(
+        line[columns.branch_start : columns.branch_end]
+    ):
         raise UnreliableExtractionError("A transaction continuation contains other columns")
     continuation = _clean_cell(line[columns.description_start : columns.document_start])
     if continuation:
@@ -418,7 +476,10 @@ def _extract_masked_account_number(source_text: str) -> str | None:
 
 def _optional_statement_number(source_text: str) -> str | None:
     match = re.search(r"CARTOLA\s+N[°ºO][ \t]*:[ \t]*([^\n]+)", source_text, re.IGNORECASE)
-    return match.group(1).strip() if match and match.group(1).strip() else None
+    if match is None:
+        return None
+    statement_number = re.split(r"\s+N[°ºO]\s*DE\s*PAGINA", match.group(1), flags=re.IGNORECASE)[0].strip()
+    return statement_number or None
 
 
 def _optional_summary(document_text: str) -> StatementSummary | None:
@@ -513,3 +574,7 @@ def _normalize_document_text(pages: tuple[str, ...]) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = "".join(character for character in text if not unicodedata.combining(character))
     return re.sub(r"\s+", " ", text)
+
+
+def _has_required_markers(document_text: str, markers: tuple[str, ...]) -> bool:
+    return all(marker in document_text for marker in markers)

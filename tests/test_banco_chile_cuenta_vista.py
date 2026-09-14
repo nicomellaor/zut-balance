@@ -19,6 +19,7 @@ from zut_balance.pdf_validation import extract_pdf_text
 
 
 SAMPLE_PDF = Path(__file__).parents[1] / "media" / "cartola_ejemplo_banco_chile.pdf"
+V2_SAMPLE_PDF = Path(__file__).parents[1] / "media" / "cartola_v2_ejemplo_banco_chile.pdf"
 
 
 def test_validate_format_accepts_supported_sample() -> None:
@@ -186,6 +187,66 @@ def test_parse_banco_chile_cuenta_vista_returns_accepted_statement() -> None:
     assert statement.summary.closing_balance == 68_251
     assert len(statement.transactions) == 6
     assert statement.transactions[-1].reported_balance == 0
+
+
+def test_parse_banco_chile_cuenta_vista_returns_v2_normalized_statement() -> None:
+    statement = parse_banco_chile_cuenta_vista(V2_SAMPLE_PDF)
+
+    assert statement.bank == "Banco de Chile"
+    assert statement.product == "CUENTA VISTA"
+    assert statement.masked_account_number == "*****6789"
+    assert statement.currency == "PESOS"
+    assert statement.period_start.isoformat() == "2026-06-30"
+    assert statement.period_end.isoformat() == "2026-07-31"
+    assert statement.statement_number == "5"
+    assert statement.page_number == 1
+    assert statement.total_pages == 1
+    assert statement.summary.opening_balance == 48_210
+    assert statement.summary.closing_balance == 61_891
+    assert statement.summary.one_day_retention == 0
+    assert statement.summary.multi_day_retention == 0
+    assert statement.summary.available_balance == 61_891
+    assert [(transaction.date.isoformat(), transaction.description) for transaction in statement.transactions] == [
+        ("2026-07-27", "TRASPASO A:Sociedad Procesadora De"),
+        ("2026-07-27", "TRASPASO DE:ROSALES, PEDRO JUAN"),
+        ("2026-07-28", "TRASPASO DE:ROSALES, PEDRO JUAN"),
+        ("2026-07-28", "TRASPASO DE:ROSALES, PEDRO JUAN"),
+        ("2026-07-29", "PAGO:SERVICIOS MEDICOS"),
+        ("2026-07-30", "PAGO:CINEPLANET WEBPAY"),
+    ]
+    assert [transaction.amount for transaction in statement.transactions] == [
+        5_000,
+        30_000,
+        50_000,
+        50_000,
+        91_519,
+        19_800,
+    ]
+    assert [transaction.movement_type for transaction in statement.transactions] == [
+        "debit",
+        "credit",
+        "credit",
+        "credit",
+        "debit",
+        "debit",
+    ]
+    assert [transaction.document_number for transaction in statement.transactions] == [None] * 6
+    assert [transaction.branch_or_channel for transaction in statement.transactions] == [
+        "INTERNET",
+        "INTERNET",
+        "INTERNET",
+        "INTERNET",
+        "CENTRAL",
+        "CENTRAL",
+    ]
+    assert [transaction.reported_balance for transaction in statement.transactions] == [
+        0,
+        73_210,
+        0,
+        173_210,
+        81_691,
+        0,
+    ]
 
 
 def test_parse_banco_chile_cuenta_vista_rejects_partial_extraction(

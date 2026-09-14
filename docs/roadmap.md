@@ -50,7 +50,7 @@ y
 | 2. Robustecimiento de ingesta | Soporte aprobado para variantes sintéticas de layout, varias páginas y períodos que cruzan de año, respaldado por fixtures versionados. | Fase 1. | Completada |
 | 3. Servicio de procesamiento | API de carga y consulta con límites, validación de entrada y controles de privacidad. | Fase 2. | Completada |
 | 4. Persistencia | Modelo de datos para cartolas y movimientos normalizados, con política de retención de documentos. | Fase 3. | Completada |
-| 5. Nuevos formatos | Parsers aislados para nuevos productos o bancos, cada uno con su propia especificación y pruebas. | Fases 2 y 4. | Pendiente |
+| 5. Nuevos formatos | Primer incremento: layout v2 validado de Cuenta Vista Banco de Chile, con detección automática y pruebas reproducibles. | Fases 2 y 4. | Completada |
 | 6. Categorización | Normalización de comercios y reglas deterministas de categorías, con corrección por usuario como mejora posterior. | Fase 4. | Pendiente |
 | 7. Análisis | Métricas de gasto, variaciones, comercios principales y detección de recurrencias sobre datos categorizados. | Fase 6. | Pendiente |
 | 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Pendiente |
@@ -59,9 +59,9 @@ y
 
 ## Orden de trabajo
 
-La siguiente prioridad es la fase 5. Con la persistencia de movimientos
-normalizados disponible, se pueden añadir parsers aislados para nuevos productos
-o bancos, cada uno con su propia especificación y pruebas reproducibles.
+La siguiente prioridad es la fase 6. Con formatos de Cuenta Vista validados y
+movimientos persistidos, se puede normalizar comercios y aplicar reglas
+deterministas de categorías antes de construir métricas o una interfaz.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

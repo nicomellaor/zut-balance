@@ -15,6 +15,7 @@ from zut_balance.persistence import DatabaseBusyError
 
 
 FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_ejemplo_banco_chile.pdf"
+V2_FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_v2_ejemplo_banco_chile.pdf"
 API_KEY = "test-api-key"
 AUTHORIZATION = {"Authorization": f"Bearer {API_KEY}"}
 
@@ -234,6 +235,34 @@ def test_concurrent_statement_uploads_reuse_the_same_record(client: TestClient) 
     assert first.json()["statement_id"] == second.json()["statement_id"]
     listing = client.get("/v1/statements", headers=AUTHORIZATION).json()["statements"]
     assert [item["statement_id"] for item in listing] == [first.json()["statement_id"]]
+
+
+def test_statement_upload_persists_v2_without_personal_details(client: TestClient) -> None:
+    content = V2_FIXTURE_PDF.read_bytes()
+    expected = parse_banco_chile_cuenta_vista(content)
+
+    created = _upload(client, content)
+    duplicate = _upload(client, content)
+
+    assert created.status_code == duplicate.status_code == 200
+    assert created.json()["statement_id"] == duplicate.json()["statement_id"]
+    assert created.json()["metadata"]["masked_account_number"] == expected.masked_account_number
+    assert created.json()["transactions"] == [
+        {
+            "date": transaction.date.isoformat(),
+            "description": transaction.description,
+            "document_number": transaction.document_number,
+            "branch_or_channel": transaction.branch_or_channel,
+            "amount": transaction.amount,
+            "movement_type": transaction.movement_type.value,
+            "reported_balance": transaction.reported_balance,
+        }
+        for transaction in expected.transactions
+    ]
+    response_text = created.text
+    assert "Juan Alfonso Perez Lopez" not in response_text
+    assert "juanperez@gmail.com" not in response_text
+    assert "123456789" not in response_text
 
 
 def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:

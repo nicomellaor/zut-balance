@@ -8,7 +8,9 @@ from pypdf.errors import PdfReadError
 from .errors import EncryptedPdfError, InvalidPdfError, TextExtractionError
 
 
-def extract_pdf_text(pdf_content: bytes) -> tuple[str, ...]:
+def extract_pdf_text(
+    pdf_content: bytes, *, extraction_mode: str | None = "layout"
+) -> tuple[str, ...]:
     """Return page text after validating a readable, digital PDF."""
     try:
         reader = PdfReader(BytesIO(pdf_content))
@@ -20,7 +22,12 @@ def extract_pdf_text(pdf_content: bytes) -> tuple[str, ...]:
 
     try:
         pages = tuple(
-            page.extract_text(extraction_mode="layout") or ""
+            (
+                page.extract_text(extraction_mode=extraction_mode)
+                if extraction_mode is not None
+                else page.extract_text()
+            )
+            or ""
             if "/Contents" in page
             else ""
             for page in reader.pages
