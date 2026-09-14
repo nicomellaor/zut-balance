@@ -147,6 +147,19 @@ def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> 
         assert connection.execute("SELECT COUNT(*) FROM transaction_classifications").fetchone()[0] == 0
 
 
+def test_repository_get_many_preserves_requested_order_and_omits_missing_ids(tmp_path: Path) -> None:
+    repository = StatementRepository(tmp_path / "statements.sqlite3")
+    repository.initialize()
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    first = repository.save(statement, "i" * 64, datetime.now(UTC).isoformat())
+    second = repository.save(statement, "j" * 64, datetime.now(UTC).isoformat())
+
+    stored = repository.get_many((second.id, "missing", first.id))
+
+    assert tuple(item.id for item in stored) == (second.id, first.id)
+    assert all(transaction.classification is not None for item in stored for transaction in item.statement.transactions)
+
+
 def test_repository_migrates_v1_data_to_v2_classifications(tmp_path: Path) -> None:
     database_path = tmp_path / "statements.sqlite3"
     repository = StatementRepository(database_path)

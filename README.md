@@ -86,6 +86,14 @@ adicionales son:
   y 100, sin movimientos.
 - `DELETE /v1/statements/{statement_id}`: elimina permanentemente la cartola y
   sus movimientos, y devuelve `204`.
+- `GET /v1/analysis?statement_id=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD`: calcula
+  al vuelo métricas de gasto, evolución mensual, comercios y recurrencias para
+  entre una y cien cartolas compatibles y sin períodos solapados.
+
+El análisis incluye débitos de consumo, comisiones y movimientos sin categoría;
+informa créditos, transferencias, retiros e ingresos por separado. No persiste
+resultados ni expone descripciones o cuentas. Los rangos son inclusivos y no
+pueden superar 24 meses.
 
 ## Límites y privacidad
 
@@ -102,8 +110,9 @@ adicionales son:
   versión de Zut Balance incompatible o futura, falla de forma segura sin
   modificarlo; use una ruta de base nueva o migre la instalación antes de
   reiniciar el servicio.
-- Las categorías son reglas deterministas versionadas; no hay corrección manual,
-  clasificación por IA, métricas, interfaz gráfica ni OCR.
+- Las categorías y métricas son deterministas y se calculan con resultados ya
+  clasificados; no hay corrección manual, clasificación por IA, interfaz gráfica
+  ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
@@ -122,3 +131,5 @@ adicionales son:
 - [Plan técnico de persistencia](specs/persistence/plan.md).
 - [Especificación del layout v2](specs/banco-chile-cuenta-vista-v2/spec.md).
 - [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).
+- [Especificación de análisis](specs/analysis/spec.md).
+- [Plan técnico de análisis](specs/analysis/plan.md).

@@ -184,6 +184,24 @@ class StatementRepository:
                 return None
             return self._stored_statement(connection, row)
 
+    def get_many(self, statement_ids: tuple[str, ...]) -> tuple[StoredStatement, ...]:
+        """Return complete stored statements in the caller's requested order."""
+        if not statement_ids:
+            return ()
+        placeholders = ", ".join("?" for _ in statement_ids)
+        with closing(self._connect()) as connection:
+            rows = {
+                row["id"]: row
+                for row in connection.execute(
+                    f"SELECT * FROM statements WHERE id IN ({placeholders})", statement_ids
+                )
+            }
+            return tuple(
+                self._stored_statement(connection, rows[statement_id])
+                for statement_id in statement_ids
+                if statement_id in rows
+            )
+
     def save(self, statement: Statement, source_sha256: str, created_at: str) -> StoredStatement:
         statement_id = str(uuid4())
         classified_transactions: list[Transaction] = []

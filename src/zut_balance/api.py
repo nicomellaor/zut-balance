@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from io import BytesIO
 import os
@@ -14,6 +14,7 @@ from python_multipart.exceptions import MultipartParseError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .analysis import AnalysisScopeError, AnalysisStatement, AnalysisValidationError, analyze_statements
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
 from .models import Statement
@@ -110,6 +111,83 @@ def _metadata_response(metadata: StoredStatementMetadata) -> dict[str, object]:
         "total_pages": metadata.total_pages,
         "created_at": metadata.created_at,
     }
+
+
+def _analysis_response(result) -> JSONResponse:
+    return JSONResponse(
+        status_code=200,
+        content={
+            "scope": {
+                "statement_ids": list(result.scope.statement_ids),
+                "from": result.scope.from_date.isoformat(),
+                "to": result.scope.to_date.isoformat(),
+                "currency": result.scope.currency,
+                "ruleset_versions": list(result.scope.ruleset_versions),
+            },
+            "coverage": {
+                "covered_ranges": [
+                    {"from": start.isoformat(), "to": end.isoformat()}
+                    for start, end in result.coverage.covered_ranges
+                ],
+                "gaps": [
+                    {"from": start.isoformat(), "to": end.isoformat()}
+                    for start, end in result.coverage.gaps
+                ],
+                "partial_months": list(result.coverage.partial_months),
+            },
+            "summary": {
+                "spending_amount": result.spending.amount,
+                "transaction_count": result.spending.count,
+                "credits_amount": result.credits.amount,
+                "credits_count": result.credits.count,
+                "excluded_debits_amount": result.excluded_debits.amount,
+                "excluded_debits_count": result.excluded_debits.count,
+                "uncategorized_amount": result.uncategorized.amount,
+                "uncategorized_count": result.uncategorized.count,
+                "merchant_coverage": {
+                    "identified_amount": result.merchant_coverage[0].amount,
+                    "identified_count": result.merchant_coverage[0].count,
+                    "unidentified_amount": result.merchant_coverage[1].amount,
+                    "unidentified_count": result.merchant_coverage[1].count,
+                },
+                "by_category": [
+                    {"category": item.category.value, "amount": item.amount, "count": item.count}
+                    for item in result.categories
+                ],
+            },
+            "monthly": [
+                {
+                    "month": month.month,
+                    "amount": month.amount,
+                    "count": month.count,
+                    "by_category": [
+                        {"category": item.category.value, "amount": item.amount, "count": item.count}
+                        for item in month.categories
+                    ],
+                    "absolute_change": month.absolute_change,
+                    "percentage_change": month.percentage_change,
+                }
+                for month in result.monthly
+            ],
+            "top_merchants": [
+                {"merchant_name": item.merchant_name, "amount": item.amount, "count": item.count}
+                for item in result.top_merchants
+            ],
+            "recurrence_candidates": [
+                {
+                    "merchant_name": item.merchant_name,
+                    "cadence": item.cadence.value,
+                    "dates": [value.isoformat() for value in item.dates],
+                    "amounts": list(item.amounts),
+                    "count": item.count,
+                    "minimum_amount": item.minimum_amount,
+                    "average_amount": item.average_amount,
+                    "maximum_amount": item.maximum_amount,
+                }
+                for item in result.recurrence_candidates
+            ],
+        },
+    )
 
 
 def create_app(settings: ServiceSettings | None = None) -> FastAPI:
@@ -233,6 +311,33 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
                 ],
             },
         )
+
+    @app.get("/v1/analysis")
+    def get_analysis(request: Request) -> JSONResponse:
+        access_error = require_data_access(request)
+        if access_error is not None:
+            return access_error
+        assert repository is not None
+        statement_ids = tuple(request.query_params.getlist("statement_id"))
+        if not statement_ids or len(statement_ids) > 100 or len(set(statement_ids)) != len(statement_ids):
+            return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
+        try:
+            from_date = date.fromisoformat(request.query_params["from"])
+            to_date = date.fromisoformat(request.query_params["to"])
+        except (KeyError, ValueError):
+            return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
+        stored = repository.get_many(statement_ids)
+        if len(stored) != len(statement_ids):
+            return _error_response(404, "statement_not_found", "A requested statement was not found")
+        try:
+            result = analyze_statements(
+                tuple(AnalysisStatement(item.id, item.statement) for item in stored), from_date, to_date
+            )
+        except AnalysisValidationError:
+            return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
+        except AnalysisScopeError:
+            return _error_response(409, "invalid_analysis_scope", "The selected statements cannot be analyzed together")
+        return _analysis_response(result)
 
     @app.delete(
         "/v1/statements/{statement_id}",

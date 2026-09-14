@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from unittest.mock import ANY
@@ -274,6 +275,100 @@ def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:
     assert client.get("/v1/statements?limit=101", headers=AUTHORIZATION).status_code == 400
     assert client.get("/v1/statements?offset=-1", headers=AUTHORIZATION).status_code == 400
     assert client.get("/v1/statements?offset=invalid", headers=AUTHORIZATION).status_code == 400
+
+
+def test_analysis_requires_authentication_and_returns_safe_aggregates(client: TestClient) -> None:
+    content = FIXTURE_PDF.read_bytes()
+    created = _upload(client, content).json()
+
+    unauthorized = client.get("/v1/analysis")
+    response = client.get(
+        "/v1/analysis",
+        params=[
+            ("statement_id", created["statement_id"]),
+            ("from", created["metadata"]["period_start"]),
+            ("to", created["metadata"]["period_end"]),
+        ],
+        headers=AUTHORIZATION,
+    )
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {
+        "scope",
+        "coverage",
+        "summary",
+        "monthly",
+        "top_merchants",
+        "recurrence_candidates",
+    }
+    assert payload["scope"]["currency"] == "CLP"
+    assert "private description" not in response.text
+
+
+def test_analysis_rejects_invalid_parameters_and_missing_statements(client: TestClient) -> None:
+    invalid = client.get("/v1/analysis", headers=AUTHORIZATION)
+    missing = client.get(
+        "/v1/analysis?statement_id=missing&from=2026-01-01&to=2026-01-31",
+        headers=AUTHORIZATION,
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "invalid_analysis_query"
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "statement_not_found"
+
+
+def test_analysis_reflects_statement_deletion_immediately(client: TestClient) -> None:
+    created = _upload(client, FIXTURE_PDF.read_bytes()).json()
+    statement_id = created["statement_id"]
+    client.delete(f"/v1/statements/{statement_id}", headers=AUTHORIZATION)
+
+    response = client.get(
+        "/v1/analysis",
+        params=[
+            ("statement_id", statement_id),
+            ("from", created["metadata"]["period_start"]),
+            ("to", created["metadata"]["period_end"]),
+        ],
+        headers=AUTHORIZATION,
+    )
+
+    assert response.status_code == 404
+
+
+def test_analysis_does_not_modify_sqlite(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    client = TestClient(create_app(ServiceSettings(database_path, API_KEY)))
+    created = _upload(client, FIXTURE_PDF.read_bytes()).json()
+    with sqlite3.connect(database_path) as connection:
+        before = (
+            connection.execute("PRAGMA user_version").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM statements").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM transactions").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM transaction_classifications").fetchone(),
+        )
+
+    response = client.get(
+        "/v1/analysis",
+        params=[
+            ("statement_id", created["statement_id"]),
+            ("from", created["metadata"]["period_start"]),
+            ("to", created["metadata"]["period_end"]),
+        ],
+        headers=AUTHORIZATION,
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        after = (
+            connection.execute("PRAGMA user_version").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM statements").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM transactions").fetchone(),
+            connection.execute("SELECT COUNT(*) FROM transaction_classifications").fetchone(),
+        )
+    assert response.status_code == 200
+    assert after == before
 
 
 def test_statement_upload_rejects_invalid_pdf_without_parser_details(client: TestClient) -> None:
