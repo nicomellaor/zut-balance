@@ -103,6 +103,37 @@ def test_data_routes_require_explicit_configuration(tmp_path: Path) -> None:
         assert response.json()["error"]["code"] == "service_not_configured"
 
 
+def test_cors_allows_only_configured_origins(tmp_path: Path) -> None:
+    client = TestClient(
+        create_app(
+            ServiceSettings(
+                tmp_path / "statements.sqlite3",
+                API_KEY,
+                ("http://localhost:5173",),
+            )
+        )
+    )
+
+    allowed = client.options(
+        "/v1/statements",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    denied = client.options(
+        "/v1/statements",
+        headers={
+            "Origin": "http://untrusted.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "*" not in allowed.headers["access-control-allow-origin"]
+    assert "access-control-allow-origin" not in denied.headers
+
+
 def test_statement_upload_requires_one_file_named_file(client: TestClient) -> None:
     response = client.post("/v1/statements", headers=AUTHORIZATION)
 

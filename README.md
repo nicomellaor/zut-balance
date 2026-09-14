@@ -53,6 +53,7 @@ Inicie el servicio con:
 ```bash
 export ZUT_BALANCE_DATABASE_PATH="./zut-balance.sqlite3"
 export ZUT_BALANCE_API_KEY="un-secreto-largo-y-aleatorio"
+export ZUT_BALANCE_CORS_ORIGINS="http://127.0.0.1:5173"
 uvicorn zut_balance.api:app
 ```
 
@@ -95,6 +96,22 @@ informa créditos, transferencias, retiros e ingresos por separado. No persiste
 resultados ni expone descripciones o cuentas. Los rangos son inclusivos y no
 pueden superar 24 meses.
 
+## Interfaz web
+
+La SPA local está en `frontend/`. En otra terminal:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Abra `http://127.0.0.1:5173`, ingrese la misma API key configurada en el
+backend y úsela para cargar cartolas, revisar movimientos y explorar métricas.
+La clave existe solo en memoria: no se guarda en almacenamiento del navegador y
+se elimina al recargar, cerrar la pestaña o cerrar sesión.
+
 ## Límites y privacidad
 
 - La API acepta un PDF de hasta `10 MiB` y `20` páginas por solicitud. No exige
@@ -111,8 +128,7 @@ pueden superar 24 meses.
   modificarlo; use una ruta de base nueva o migre la instalación antes de
   reiniciar el servicio.
 - Las categorías y métricas son deterministas y se calculan con resultados ya
-  clasificados; no hay corrección manual, clasificación por IA, interfaz gráfica
-  ni OCR.
+  clasificados; no hay corrección manual, clasificación por IA ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
@@ -133,3 +149,5 @@ pueden superar 24 meses.
 - [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).
 - [Especificación de análisis](specs/analysis/spec.md).
 - [Plan técnico de análisis](specs/analysis/plan.md).
+- [Especificación de interfaz](specs/interface/spec.md).
+- [Plan técnico de interfaz](specs/interface/plan.md).

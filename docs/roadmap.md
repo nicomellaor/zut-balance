@@ -28,7 +28,7 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1 a 7 están completadas: existe una librería Python y un servicio HTTP
+Las fases 1 a 8 están completadas: existe una librería Python, un servicio HTTP
 para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
 reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
 conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
@@ -37,7 +37,8 @@ fase 3 añadió carga HTTP validada. La fase 4 persiste datos normalizados en
 SQLite, protegidos mediante API key y eliminables explícitamente, sin guardar
 PDFs originales. La fase 6 clasifica movimientos con reglas deterministas. La
 fase 7 calcula al vuelo métricas de gasto, variaciones, comercios y recurrencias
-para cartolas seleccionadas. No hay interfaz, OCR ni IA.
+para cartolas seleccionadas. La fase 8 añade una SPA local para cargar cartolas,
+revisar movimientos y explorar esas métricas. No hay OCR ni IA.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -55,15 +56,15 @@ y
 | 5. Nuevos formatos | Primer incremento: layout v2 validado de Cuenta Vista Banco de Chile, con detección automática y pruebas reproducibles. | Fases 2 y 4. | Completada |
 | 6. Categorización | Normalización de comercios y reglas deterministas de categorías, con corrección por usuario como mejora posterior. | Fase 4. | Completada |
 | 7. Análisis | Métricas de gasto, variaciones, comercios principales y detección de recurrencias sobre datos categorizados. | Fase 6. | Completada |
-| 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Pendiente |
+| 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Completada |
 | 9. Insights asistidos | Explicaciones sobre métricas y hechos calculados, con salvaguardas contra conclusiones inventadas. | Fase 7. | Pendiente |
 | 10. OCR condicional | Evaluación e incorporación de OCR solo si la evidencia demuestra que es necesario y se puede validar con precisión. | Fases 2 y 5. | Pendiente |
 
 ## Orden de trabajo
 
-La siguiente prioridad es la fase 8. Con movimientos categorizados y métricas
-deterministas, se puede construir una interfaz para cargar cartolas y explorar
-resultados antes de introducir insights asistidos.
+La siguiente prioridad es la fase 9. Con métricas deterministas visibles, se
+pueden diseñar explicaciones asistidas sobre hechos calculados sin introducir
+conclusiones financieras inventadas.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

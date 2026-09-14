@@ -7,6 +7,7 @@ from pathlib import Path
 import secrets
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -31,13 +32,20 @@ MAX_LIST_LIMIT = 100
 class ServiceSettings:
     database_path: Path | None
     api_key: str | None
+    cors_origins: tuple[str, ...] = ()
 
 
 def _environment_settings() -> ServiceSettings:
     database_path = os.environ.get("ZUT_BALANCE_DATABASE_PATH")
+    cors_origins = tuple(
+        origin.strip()
+        for origin in os.environ.get("ZUT_BALANCE_CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    )
     return ServiceSettings(
         database_path=Path(database_path) if database_path else None,
         api_key=os.environ.get("ZUT_BALANCE_API_KEY"),
+        cors_origins=cors_origins,
     )
 
 
@@ -199,6 +207,13 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         repository.initialize()
 
     app = FastAPI(title="Zut Balance Processing Service", version="1.0.0")
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(settings.cors_origins),
+            allow_methods=["GET", "POST", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http_exception(_: Request, error: StarletteHTTPException) -> JSONResponse:
