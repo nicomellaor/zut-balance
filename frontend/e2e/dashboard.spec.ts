@@ -2,11 +2,11 @@ import { expect, test } from '@playwright/test'
 
 test('loads a statement, shows analysis, and confirms deletion', async ({ page }) => {
   await page.goto('/')
-  await page.getByLabel('API key').fill('test-api-key')
-  await page.getByLabel('API key').focus()
+  await page.getByLabel('Contraseña').fill('admin-password')
+  await page.getByLabel('Contraseña').focus()
   await page.keyboard.press('Tab')
-  await expect(page.getByRole('button', { name: 'Acceder' })).toBeFocused()
-  await page.getByRole('button', { name: 'Acceder' }).click()
+  await expect(page.getByRole('button', { name: 'Iniciar sesión' })).toBeFocused()
+  await page.getByRole('button', { name: 'Iniciar sesión' }).click()
   await expect(page.getByText('Carga una cartola')).toBeVisible()
 
   await page.locator('input[type="file"]').setInputFiles('../media/cartola_ejemplo_banco_chile.pdf')

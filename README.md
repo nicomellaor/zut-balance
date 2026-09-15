@@ -31,6 +31,11 @@ Se requiere Python `>=3.12,<3.15`.
 python -m pip install -e ".[dev]"
 ```
 
+Para un despliegue privado reproducible, siga la
+[guía Docker](docs/deployment.md).
+La configuración local predeterminada queda disponible en
+`https://localhost:8443`.
+
 ```python
 from zut_balance import parse_banco_chile_cuenta_vista
 
@@ -96,27 +101,28 @@ informa créditos, transferencias, retiros e ingresos por separado. No persiste
 resultados ni expone descripciones o cuentas. Los rangos son inclusivos y no
 pueden superar 24 meses.
 
-## Interfaz web
+## Interfaz web de desarrollo
 
 La SPA local está en `frontend/`. En otra terminal:
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env
 npm run dev
 ```
 
-Abra `http://127.0.0.1:5173`, ingrese la misma API key configurada en el
-backend y úsela para cargar cartolas, revisar movimientos y explorar métricas.
-La clave existe solo en memoria: no se guarda en almacenamiento del navegador y
-se elimina al recargar, cerrar la pestaña o cerrar sesión.
+Configure el backend con `ZUT_BALANCE_WEB_AUTH_ENABLED=true`, un hash Argon2,
+un secreto de sesión, `ZUT_BALANCE_API_KEY`,
+`ZUT_BALANCE_COOKIE_SECURE=false` y
+`ZUT_BALANCE_TRUSTED_ORIGINS=http://127.0.0.1:5173`.
+Abra `http://127.0.0.1:5173` e inicie sesión con la contraseña del administrador.
+La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
 
 ## Límites y privacidad
 
 - La API acepta un PDF de hasta `10 MiB` y `20` páginas por solicitud. No exige
-  autenticación para `GET /health`; todas las rutas de datos requieren
-  `ZUT_BALANCE_API_KEY` mediante `Authorization: Bearer`.
+  autenticación para `GET /health`; las rutas de datos requieren una sesión web
+  válida o `ZUT_BALANCE_API_KEY` mediante `Authorization: Bearer`.
 - SQLite guarda resultados normalizados hasta su eliminación explícita. Nunca
   guarda el PDF original ni el texto extraído.
 - SQLite no cifra en reposo: el directorio y archivo configurados en
@@ -151,3 +157,4 @@ se elimina al recargar, cerrar la pestaña o cerrar sesión.
 - [Plan técnico de análisis](specs/analysis/plan.md).
 - [Especificación de interfaz](specs/interface/spec.md).
 - [Plan técnico de interfaz](specs/interface/plan.md).
+- [Guía de despliegue Docker](docs/deployment.md).

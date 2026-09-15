@@ -14,8 +14,10 @@ from pypdf.errors import PdfReadError
 from python_multipart.exceptions import MultipartParseError
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.sessions import SessionMiddleware
 
 from .analysis import AnalysisScopeError, AnalysisStatement, AnalysisValidationError, analyze_statements
+from .auth import verify_administrator_password, validate_web_authentication_settings
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
 from .models import Statement
@@ -33,6 +35,11 @@ class ServiceSettings:
     database_path: Path | None
     api_key: str | None
     cors_origins: tuple[str, ...] = ()
+    web_auth_enabled: bool = False
+    admin_password_hash: str | None = None
+    session_secret: str | None = None
+    trusted_origins: tuple[str, ...] = ()
+    cookie_secure: bool = False
 
 
 def _environment_settings() -> ServiceSettings:
@@ -42,10 +49,20 @@ def _environment_settings() -> ServiceSettings:
         for origin in os.environ.get("ZUT_BALANCE_CORS_ORIGINS", "").split(",")
         if origin.strip()
     )
+    trusted_origins = tuple(
+        origin.strip()
+        for origin in os.environ.get("ZUT_BALANCE_TRUSTED_ORIGINS", "").split(",")
+        if origin.strip()
+    )
     return ServiceSettings(
         database_path=Path(database_path) if database_path else None,
         api_key=os.environ.get("ZUT_BALANCE_API_KEY"),
         cors_origins=cors_origins,
+        web_auth_enabled=os.environ.get("ZUT_BALANCE_WEB_AUTH_ENABLED", "").lower() == "true",
+        admin_password_hash=os.environ.get("ZUT_BALANCE_ADMIN_PASSWORD_HASH"),
+        session_secret=os.environ.get("ZUT_BALANCE_SESSION_SECRET"),
+        trusted_origins=trusted_origins,
+        cookie_secure=os.environ.get("ZUT_BALANCE_COOKIE_SECURE", "").lower() == "true",
     )
 
 
@@ -200,6 +217,12 @@ def _analysis_response(result) -> JSONResponse:
 
 def create_app(settings: ServiceSettings | None = None) -> FastAPI:
     settings = settings or _environment_settings()
+    if settings.web_auth_enabled:
+        if not settings.api_key:
+            raise RuntimeError("The integration API key is not configured")
+        validate_web_authentication_settings(
+            settings.admin_password_hash, settings.session_secret, settings.trusted_origins
+        )
     repository = (
         StatementRepository(settings.database_path) if settings.database_path is not None else None
     )
@@ -207,12 +230,23 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         repository.initialize()
 
     app = FastAPI(title="Zut Balance Processing Service", version="1.0.0")
+    if settings.web_auth_enabled:
+        assert settings.session_secret is not None
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=settings.session_secret,
+            max_age=8 * 60 * 60,
+            https_only=settings.cookie_secure,
+            same_site="strict",
+            session_cookie="zut_balance_session",
+        )
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(settings.cors_origins),
             allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["Authorization", "Content-Type"],
+            allow_credentials=True,
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -224,19 +258,50 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     def require_data_access(request: Request) -> JSONResponse | None:
-        if repository is None or not settings.api_key:
+        if repository is None or (not settings.api_key and not settings.web_auth_enabled):
             return _error_response(
                 500,
                 "service_not_configured",
                 "The data service is not configured",
             )
         authorization = request.headers.get("Authorization")
-        if authorization is None or not authorization.startswith("Bearer "):
+        if authorization is not None:
+            if not authorization.startswith("Bearer "):
+                return _error_response(401, "unauthorized", "Authentication is required")
+            provided_key = authorization.removeprefix("Bearer ")
+            if not settings.api_key or not provided_key or not secrets.compare_digest(
+                provided_key, settings.api_key
+            ):
+                return _error_response(401, "unauthorized", "Authentication is required")
+            return None
+        if settings.web_auth_enabled and request.session.get("administrator") is True:
+            if request.method in {"POST", "DELETE"} and request.headers.get("Origin") not in settings.trusted_origins:
+                return _error_response(403, "forbidden", "The request origin is not allowed")
+            return None
+        return _error_response(401, "unauthorized", "Authentication is required")
+
+    @app.post("/v1/auth/login", status_code=204, response_class=Response, response_model=None)
+    async def login(request: Request) -> Response | JSONResponse:
+        if not settings.web_auth_enabled or settings.admin_password_hash is None:
+            return _error_response(404, "not_found", "The requested resource was not found")
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = {}
+        password = payload.get("password") if isinstance(payload, dict) else None
+        if not isinstance(password, str) or not verify_administrator_password(
+            settings.admin_password_hash, password
+        ):
             return _error_response(401, "unauthorized", "Authentication is required")
-        provided_key = authorization.removeprefix("Bearer ")
-        if not provided_key or not secrets.compare_digest(provided_key, settings.api_key):
-            return _error_response(401, "unauthorized", "Authentication is required")
-        return None
+        request.session.clear()
+        request.session["administrator"] = True
+        return Response(status_code=204)
+
+    @app.post("/v1/auth/logout", status_code=204, response_class=Response, response_model=None)
+    def logout(request: Request) -> Response:
+        if settings.web_auth_enabled:
+            request.session.clear()
+        return Response(status_code=204)
 
     @app.post("/v1/statements")
     async def process_statement_upload(request: Request) -> JSONResponse:

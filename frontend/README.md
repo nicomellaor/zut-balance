@@ -10,16 +10,16 @@ Se requiere Node.js 24 o compatible.
 
 ```bash
 npm install
-cp .env.example .env
 npm run dev
 ```
 
-`VITE_API_BASE_URL` es una URL pública no secreta. Para desarrollo local use
-`http://127.0.0.1:8000`. El backend debe permitir el origen de Vite mediante
-`ZUT_BALANCE_CORS_ORIGINS=http://127.0.0.1:5173`.
+Vite reenvía `/v1` a `http://127.0.0.1:8000` para que el navegador conserve el
+mismo origen. Inicie la API con autenticación web, hash Argon2, secreto de
+sesión, `ZUT_BALANCE_API_KEY`, `ZUT_BALANCE_COOKIE_SECURE=false` y
+`ZUT_BALANCE_TRUSTED_ORIGINS=http://127.0.0.1:5173` durante desarrollo.
 
-La interfaz solicita la API key directamente al operador y la mantiene solo en
-memoria. Recargar, cerrar la pestaña o usar "Cerrar sesión" la elimina.
+La interfaz solicita la contraseña del administrador y conserva una sesión
+firmada en una cookie `HttpOnly`; no solicita, almacena ni transmite API keys.
 
 ## Calidad
 

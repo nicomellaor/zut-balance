@@ -14,6 +14,7 @@ from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from zut_balance.categorization import classify_transaction
 from zut_balance.errors import UnsupportedStatementError
 from zut_balance.persistence import DatabaseBusyError
+from argon2 import PasswordHasher
 
 
 FIXTURE_PDF = Path(__file__).parent.parent / "media" / "cartola_ejemplo_banco_chile.pdf"
@@ -132,6 +133,55 @@ def test_cors_allows_only_configured_origins(tmp_path: Path) -> None:
     assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert "*" not in allowed.headers["access-control-allow-origin"]
     assert "access-control-allow-origin" not in denied.headers
+
+
+@pytest.fixture
+def web_client(tmp_path: Path) -> TestClient:
+    return TestClient(
+        create_app(
+            ServiceSettings(
+                tmp_path / "statements.sqlite3",
+                API_KEY,
+                web_auth_enabled=True,
+                admin_password_hash=PasswordHasher().hash("admin-password"),
+                session_secret="s" * 32,
+                trusted_origins=("https://zut.test",),
+            )
+        )
+    )
+
+
+def test_web_login_logout_and_bearer_precedence(web_client: TestClient) -> None:
+    denied = web_client.post("/v1/auth/login", json={"password": "wrong"})
+    login = web_client.post("/v1/auth/login", json={"password": "admin-password"})
+    session_response = web_client.get("/v1/statements?limit=1&offset=0")
+    invalid_bearer = web_client.get(
+        "/v1/statements?limit=1&offset=0", headers={"Authorization": "Bearer wrong"}
+    )
+    logout = web_client.post("/v1/auth/logout")
+    after_logout = web_client.get("/v1/statements?limit=1&offset=0")
+
+    assert denied.status_code == 401
+    assert login.status_code == 204
+    assert "Max-Age=28800" in login.headers["set-cookie"]
+    assert "httponly" in login.headers["set-cookie"]
+    assert "samesite=strict" in login.headers["set-cookie"]
+    assert session_response.status_code == 200
+    assert invalid_bearer.status_code == 401
+    assert logout.status_code == 204
+    assert after_logout.status_code == 401
+
+
+def test_session_mutations_require_a_trusted_origin(web_client: TestClient) -> None:
+    web_client.post("/v1/auth/login", json={"password": "admin-password"})
+
+    denied = web_client.delete("/v1/statements/missing")
+    allowed = web_client.delete(
+        "/v1/statements/missing", headers={"Origin": "https://zut.test"}
+    )
+
+    assert denied.status_code == 403
+    assert allowed.status_code == 404
 
 
 def test_statement_upload_requires_one_file_named_file(client: TestClient) -> None:

@@ -12,40 +12,13 @@ export type StatementMetadata = {
   created_at: string
 }
 
-type Classification = {
-  category: string
-  merchant_name: string | null
-  rule_id: string | null
-  ruleset_version: string
-}
-
-export type Transaction = {
-  date: string
-  description: string
-  document_number: string | null
-  branch_or_channel: string | null
-  amount: number
-  movement_type: string
-  reported_balance: number | null
-  classification: Classification | null
-}
-
-export type StatementDetail = {
-  statement_id: string
-  metadata: Omit<StatementMetadata, 'statement_id' | 'created_at'>
-  summary: Record<string, number | null>
-  transactions: Transaction[]
-}
-
+type Classification = { category: string; merchant_name: string | null; rule_id: string | null; ruleset_version: string }
+export type Transaction = { date: string; description: string; document_number: string | null; branch_or_channel: string | null; amount: number; movement_type: string; reported_balance: number | null; classification: Classification | null }
+export type StatementDetail = { statement_id: string; metadata: Omit<StatementMetadata, 'statement_id' | 'created_at'>; summary: Record<string, number | null>; transactions: Transaction[] }
 export type Analysis = {
   scope: { statement_ids: string[]; from: string; to: string; currency: string; ruleset_versions: string[] }
   coverage: { covered_ranges: { from: string; to: string }[]; gaps: { from: string; to: string }[]; partial_months: string[] }
-  summary: {
-    spending_amount: number; transaction_count: number; credits_amount: number; credits_count: number
-    excluded_debits_amount: number; excluded_debits_count: number; uncategorized_amount: number; uncategorized_count: number
-    merchant_coverage: { identified_amount: number; identified_count: number; unidentified_amount: number; unidentified_count: number }
-    by_category: { category: string; amount: number; count: number }[]
-  }
+  summary: { spending_amount: number; transaction_count: number; credits_amount: number; credits_count: number; excluded_debits_amount: number; excluded_debits_count: number; uncategorized_amount: number; uncategorized_count: number; merchant_coverage: { identified_amount: number; identified_count: number; unidentified_amount: number; unidentified_count: number }; by_category: { category: string; amount: number; count: number }[] }
   monthly: { month: string; amount: number; count: number; by_category: { category: string; amount: number; count: number }[]; absolute_change: number | null; percentage_change: string | null }[]
   top_merchants: { merchant_name: string | null; amount: number; count: number }[]
   recurrence_candidates: { merchant_name: string | null; cadence: string; dates: string[]; amounts: number[]; count: number; minimum_amount: number; average_amount: number; maximum_amount: number }[]
@@ -53,17 +26,11 @@ export type Analysis = {
 
 export class ApiError extends Error {
   readonly status: number
-
   constructor(status: number, message: string) { super(message); this.status = status }
 }
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-
-async function request<T>(path: string, apiKey: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${apiKey}`, ...init.headers },
-  })
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, { ...init, credentials: 'same-origin' })
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: { message?: string } } | null
     throw new ApiError(response.status, body?.error?.message ?? 'No se pudo completar la solicitud.')
@@ -72,13 +39,11 @@ async function request<T>(path: string, apiKey: string, init: RequestInit = {}):
 }
 
 export const api = {
-  listStatements: (apiKey: string, limit = 50, offset = 0) => request<{ statements: StatementMetadata[] }>(`/v1/statements?limit=${limit}&offset=${offset}`, apiKey),
-  getStatement: (apiKey: string, id: string) => request<StatementDetail>(`/v1/statements/${id}`, apiKey),
-  uploadStatement: (apiKey: string, file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return request<StatementDetail>('/v1/statements', apiKey, { method: 'POST', body: form })
-  },
-  deleteStatement: (apiKey: string, id: string) => request<void>(`/v1/statements/${id}`, apiKey, { method: 'DELETE' }),
-  getAnalysis: (apiKey: string, ids: string[], from: string, to: string) => request<Analysis>(`/v1/analysis?${new URLSearchParams([...ids.map((id) => ['statement_id', id]), ['from', from], ['to', to]]).toString()}`, apiKey),
+  login: (password: string) => request<void>('/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }),
+  logout: () => request<void>('/v1/auth/logout', { method: 'POST' }),
+  listStatements: (limit = 50, offset = 0) => request<{ statements: StatementMetadata[] }>(`/v1/statements?limit=${limit}&offset=${offset}`),
+  getStatement: (id: string) => request<StatementDetail>(`/v1/statements/${id}`),
+  uploadStatement: (file: File) => { const form = new FormData(); form.append('file', file); return request<StatementDetail>('/v1/statements', { method: 'POST', body: form }) },
+  deleteStatement: (id: string) => request<void>(`/v1/statements/${id}`, { method: 'DELETE' }),
+  getAnalysis: (ids: string[], from: string, to: string) => request<Analysis>(`/v1/analysis?${new URLSearchParams([...ids.map((id) => ['statement_id', id]), ['from', from], ['to', to]]).toString()}`),
 }

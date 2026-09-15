@@ -28,7 +28,7 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1 a 8 están completadas: existe una librería Python, un servicio HTTP
+Las fases 1 a 8 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
 para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
 reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
 conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
@@ -38,7 +38,8 @@ SQLite, protegidos mediante API key y eliminables explícitamente, sin guardar
 PDFs originales. La fase 6 clasifica movimientos con reglas deterministas. La
 fase 7 calcula al vuelo métricas de gasto, variaciones, comercios y recurrencias
 para cartolas seleccionadas. La fase 8 añade una SPA local para cargar cartolas,
-revisar movimientos y explorar esas métricas. No hay OCR ni IA.
+revisar movimientos y explorar esas métricas. El despliegue privado añade Docker
+Compose, TLS interno, sesión web y backups SQLite consistentes. No hay OCR ni IA.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)

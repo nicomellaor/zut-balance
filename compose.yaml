@@ -1,0 +1,54 @@
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    env_file: ${ZUT_BALANCE_ENV_FILE:-.env}
+    ports:
+      - "${ZUT_BALANCE_HTTPS_PORT:-8443}:443"
+    depends_on:
+      - api
+    networks:
+      - edge
+      - private
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+  api:
+    build: .
+    env_file: ${ZUT_BALANCE_ENV_FILE:-.env}
+    environment:
+      ZUT_BALANCE_DATABASE_PATH: /var/lib/zut-balance/zut-balance.sqlite3
+      ZUT_BALANCE_WEB_AUTH_ENABLED: "true"
+      ZUT_BALANCE_COOKIE_SECURE: "true"
+      ZUT_BALANCE_TRUSTED_ORIGINS: ${ZUT_BALANCE_TRUSTED_ORIGINS}
+    networks:
+      - private
+    volumes:
+      - zut-data:/var/lib/zut-balance
+
+  backup:
+    build: .
+    profiles: ["manual"]
+    env_file: ${ZUT_BALANCE_ENV_FILE:-.env}
+    environment:
+      ZUT_BALANCE_DATABASE_PATH: /var/lib/zut-balance/zut-balance.sqlite3
+      ZUT_BALANCE_BACKUP_DIRECTORY: /var/backups/zut-balance
+    volumes:
+      - zut-data:/var/lib/zut-balance
+      - zut-backups:/var/backups/zut-balance
+    command: ["python", "-m", "zut_balance.backup"]
+    networks:
+      - private
+
+networks:
+  edge:
+  private:
+    internal: true
+
+volumes:
+  caddy-data:
+  caddy-config:
+  zut-data:
+  zut-backups:
