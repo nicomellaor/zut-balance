@@ -19,6 +19,11 @@ páginas, períodos que cruzan de año, columnas desplazadas y metadatos
 reordenados. Cada movimiento persistido incorpora una clasificación determinista
 de categoría y comercio cuando una regla lo identifica.
 
+El análisis genera insights estructurados y deterministas sobre cobertura,
+calidad de clasificación, gasto, variaciones, categorías, comercios y candidatos
+de recurrencia. Cada insight incluye evidencia y limitaciones; no entrega
+recomendaciones, predicciones ni conclusiones financieras no verificables.
+
 El parser devuelve una cartola normalizada y conciliada, o un error explícito
 si el PDF no es legible, está protegido, no contiene texto extraíble, no
 corresponde al formato soportado o no puede extraerse de forma confiable.
@@ -94,7 +99,9 @@ adicionales son:
   sus movimientos, y devuelve `204`.
 - `GET /v1/analysis?statement_id=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD`: calcula
   al vuelo métricas de gasto, evolución mensual, comercios y recurrencias para
-  entre una y cien cartolas compatibles y sin períodos solapados.
+  entre una y cien cartolas compatibles y sin períodos solapados. La respuesta
+  incluye insights estructurados, ordenados y limitados a cinco, calculados sobre
+  esas mismas métricas.
 
 El análisis incluye débitos de consumo, comisiones y movimientos sin categoría;
 informa créditos, transferencias, retiros e ingresos por separado. No persiste
@@ -133,8 +140,9 @@ La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
   versión de Zut Balance incompatible o futura, falla de forma segura sin
   modificarlo; use una ruta de base nueva o migre la instalación antes de
   reiniciar el servicio.
-- Las categorías y métricas son deterministas y se calculan con resultados ya
-  clasificados; no hay corrección manual, clasificación por IA ni OCR.
+- Las categorías, métricas e insights son deterministas y se calculan con
+  resultados ya clasificados; no hay corrección manual, clasificación por IA,
+  LLM ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
 - El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
 - Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
@@ -155,6 +163,8 @@ La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
 - [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).
 - [Especificación de análisis](specs/analysis/spec.md).
 - [Plan técnico de análisis](specs/analysis/plan.md).
+- [Especificación de insights](specs/insights/spec.md).
+- [Plan técnico de insights](specs/insights/plan.md).
 - [Especificación de interfaz](specs/interface/spec.md).
 - [Plan técnico de interfaz](specs/interface/plan.md).
 - [Guía de despliegue Docker](docs/deployment.md).

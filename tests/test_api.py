@@ -383,8 +383,11 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
         "monthly",
         "top_merchants",
         "recurrence_candidates",
+        "insights",
     }
     assert payload["scope"]["currency"] == "CLP"
+    assert payload["insights"]
+    assert payload["insights"][0]["kind"] == "coverage_warning"
     assert "private description" not in response.text
 
 

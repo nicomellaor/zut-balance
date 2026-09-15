@@ -28,7 +28,7 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1 a 8 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
+Las fases 1 a 9 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
 para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
 reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
 conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
@@ -40,6 +40,8 @@ fase 7 calcula al vuelo métricas de gasto, variaciones, comercios y recurrencia
 para cartolas seleccionadas. La fase 8 añade una SPA local para cargar cartolas,
 revisar movimientos y explorar esas métricas. El despliegue privado añade Docker
 Compose, TLS interno, sesión web y backups SQLite consistentes. No hay OCR ni IA.
+La fase 9 añade insights estructurados, deterministas y trazables a la evidencia
+del análisis, sin recomendaciones financieras ni servicios externos.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -58,19 +60,28 @@ y
 | 6. Categorización | Normalización de comercios y reglas deterministas de categorías, con corrección por usuario como mejora posterior. | Fase 4. | Completada |
 | 7. Análisis | Métricas de gasto, variaciones, comercios principales y detección de recurrencias sobre datos categorizados. | Fase 6. | Completada |
 | 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Completada |
-| 9. Insights asistidos | Explicaciones sobre métricas y hechos calculados, con salvaguardas contra conclusiones inventadas. | Fase 7. | Pendiente |
-| 10. OCR condicional | Evaluación e incorporación de OCR solo si la evidencia demuestra que es necesario y se puede validar con precisión. | Fases 2 y 5. | Pendiente |
+| 9. Insights deterministas | Explicaciones estructuradas sobre métricas y hechos calculados, con evidencia y salvaguardas contra conclusiones inventadas. | Fases 7 y 8. | Completada |
 
 ## Orden de trabajo
 
-La siguiente prioridad es la fase 9. Con métricas deterministas visibles, se
-pueden diseñar explicaciones asistidas sobre hechos calculados sin introducir
-conclusiones financieras inventadas.
+La fase 9 cerró el alcance inicial con explicaciones estructuradas sobre hechos
+calculados, sin introducir conclusiones financieras inventadas. No se incorporó
+IA ni servicios externos: las reglas y textos son reproducibles y trazables a la
+evidencia expuesta por el análisis.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de
 aceptación. Una fase no se considera completa solo porque sus pruebas pasen: se
 debe comprobar que sus resultados observables satisfacen esos criterios.
+
+## Iniciativas futuras no comprometidas
+
+OCR no forma parte del roadmap comprometido. Las cartolas escaneadas o sin texto
+extraíble seguirán rechazándose de forma explícita, porque los formatos digitales
+soportados se procesan directamente con validación estructural y conciliación.
+Solo se evaluará OCR si aparecen muestras representativas y una necesidad real,
+con precisión y límites de privacidad que puedan validarse antes de ampliar el
+producto.
 
 ## Fuera del alcance inicial
 

@@ -15,6 +15,8 @@ test('loads a statement, shows analysis, and confirms deletion', async ({ page }
   await page.getByRole('checkbox').check()
   await page.getByRole('button', { name: 'Actualizar análisis' }).click()
   await expect(page.getByText('Evolución mensual')).toBeVisible()
+  await expect(page.getByText('Hallazgos del período')).toBeVisible()
+  await expect(page.getByText('Cobertura temporal')).toBeVisible()
 
   await page.getByRole('tab', { name: 'Cartolas' }).click()
   await page.getByRole('button', { name: 'Volver al historial' }).click()

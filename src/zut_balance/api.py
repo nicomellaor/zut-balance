@@ -20,6 +20,7 @@ from .analysis import AnalysisScopeError, AnalysisStatement, AnalysisValidationE
 from .auth import verify_administrator_password, validate_web_authentication_settings
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
+from .insights import generate_insights
 from .models import Statement
 from .persistence import DatabaseBusyError, StatementRepository, StoredStatementMetadata
 
@@ -139,6 +140,7 @@ def _metadata_response(metadata: StoredStatementMetadata) -> dict[str, object]:
 
 
 def _analysis_response(result) -> JSONResponse:
+    insights = generate_insights(result)
     return JSONResponse(
         status_code=200,
         content={
@@ -210,6 +212,20 @@ def _analysis_response(result) -> JSONResponse:
                     "maximum_amount": item.maximum_amount,
                 }
                 for item in result.recurrence_candidates
+            ],
+            "insights": [
+                {
+                    "kind": item.kind.value,
+                    "priority": item.priority,
+                    "title": item.title,
+                    "body": item.body,
+                    "evidence": [
+                        {"label": evidence.label, "value": evidence.value}
+                        for evidence in item.evidence
+                    ],
+                    "caveat": item.caveat,
+                }
+                for item in insights
             ],
         },
     )

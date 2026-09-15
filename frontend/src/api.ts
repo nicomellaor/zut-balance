@@ -15,6 +15,7 @@ export type StatementMetadata = {
 type Classification = { category: string; merchant_name: string | null; rule_id: string | null; ruleset_version: string }
 export type Transaction = { date: string; description: string; document_number: string | null; branch_or_channel: string | null; amount: number; movement_type: string; reported_balance: number | null; classification: Classification | null }
 export type StatementDetail = { statement_id: string; metadata: Omit<StatementMetadata, 'statement_id' | 'created_at'>; summary: Record<string, number | null>; transactions: Transaction[] }
+export type Insight = { kind: string; priority: number; title: string; body: string; evidence: { label: string; value: string | number }[]; caveat: string | null }
 export type Analysis = {
   scope: { statement_ids: string[]; from: string; to: string; currency: string; ruleset_versions: string[] }
   coverage: { covered_ranges: { from: string; to: string }[]; gaps: { from: string; to: string }[]; partial_months: string[] }
@@ -22,6 +23,7 @@ export type Analysis = {
   monthly: { month: string; amount: number; count: number; by_category: { category: string; amount: number; count: number }[]; absolute_change: number | null; percentage_change: string | null }[]
   top_merchants: { merchant_name: string | null; amount: number; count: number }[]
   recurrence_candidates: { merchant_name: string | null; cadence: string; dates: string[]; amounts: number[]; count: number; minimum_amount: number; average_amount: number; maximum_amount: number }[]
+  insights: Insight[]
 }
 
 export class ApiError extends Error {
