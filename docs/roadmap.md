@@ -48,8 +48,8 @@ La fase 11 reemplaza los insights narrativos por avisos y highlights tipados, y
 adapta la SPA al contrato anclado.
 
 La fase 12 está completada: reemplaza la cartola ancla por un ámbito persistido
-de cuenta y un catálogo autenticado. La fase 13 sigue planificada y adaptará la
-SPA a ese contrato, automatizará la consulta y priorizará resumen y gráficos.
+de cuenta y un catálogo autenticado. La fase 13 está completada: adapta la SPA a
+ese contrato, automatiza la consulta y prioriza resumen y gráficos.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -72,7 +72,7 @@ y
 | 10. Análisis histórico | Ámbito por cuenta, fronteras mensuales compartidas y trazabilidad de cartolas incluidas. | Fase 7. | Completada |
 | 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Completada |
 | 12. Análisis por cuenta | Identidad opaca de ámbito, catálogo de cuentas y reemplazo de `anchor_statement_id` por `account_id`. | Fases 4, 10 y 11. | Completada |
-| 13. Flujo del dashboard | Selector compacto de cuenta, análisis automático y jerarquía centrada en resumen y gráficos. | Fases 8, 11 y 12. | Planificada |
+| 13. Flujo del dashboard | Selector compacto de cuenta, análisis automático y jerarquía centrada en resumen y gráficos. | Fases 8, 11 y 12. | Completada |
 
 ## Orden de trabajo
 

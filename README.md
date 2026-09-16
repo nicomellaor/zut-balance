@@ -132,6 +132,9 @@ un secreto de sesión, `ZUT_BALANCE_API_KEY`,
 `ZUT_BALANCE_TRUSTED_ORIGINS=http://127.0.0.1:5173`.
 Abra `http://127.0.0.1:5173` e inicie sesión con la contraseña del administrador.
 La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
+En Análisis, una única cuenta se selecciona y analiza automáticamente; con varias,
+el selector `Cuenta` requiere una elección explícita. Fechas válidas actualizan el
+resultado sin un botón de actualización.
 
 ## Límites y privacidad
 

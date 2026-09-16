@@ -16,15 +16,23 @@ describe('API client', () => {
     expect(sessionStorage.length).toBe(0)
   })
 
-  it('uses an anchor and omits empty date filters', async () => {
+  it('uses an account, omits empty date filters, and forwards cancellation', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await api.getAnalysis('anchor-id')
+    const controller = new AbortController()
+    await api.getAnalysis('account-id', undefined, undefined, controller.signal)
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/v1/analysis?anchor_statement_id=anchor-id',
-      expect.objectContaining({ credentials: 'same-origin' }),
+      '/v1/analysis?account_id=account-id',
+      expect.objectContaining({ credentials: 'same-origin', signal: controller.signal }),
     )
+  })
+
+  it('loads the account catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ accounts: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.listAccounts()
+    expect(fetchMock).toHaveBeenCalledWith('/v1/accounts', expect.objectContaining({ credentials: 'same-origin' }))
   })
 })

@@ -19,9 +19,9 @@ describe('web session access', () => {
     await waitFor(() => expect(screen.getByText('Tu balance, bajo control.')).toBeInTheDocument())
   })
 
-  it('provides named landmarks, linked tabs, and an anchor radio group', async () => {
-    const statements = [{ statement_id: 'one', bank: 'Banco de Chile', product: 'Cuenta Vista', masked_account_number: '***1234', currency: 'CLP', period_start: '2026-01-01', period_end: '2026-01-31', created_at: '2026-02-01T12:00:00Z' }]
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ statements }), { status: 200 })))
+  it('provides named landmarks, linked tabs, and an account selector', async () => {
+    const accounts = [{ account_id: 'account-one', bank: 'Banco de Chile', product: 'Cuenta Vista', masked_account_number: '***1234', currency: 'CLP', identity_status: 'visible_mask', statement_count: 1, period_start: '2026-01-01', period_end: '2026-01-31' }, { account_id: 'account-two', bank: 'Banco de Chile', product: 'Cuenta Vista', masked_account_number: '***5678', currency: 'CLP', identity_status: 'visible_mask', statement_count: 1, period_start: '2026-02-01', period_end: '2026-02-28' }]
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((input: string) => new Response(JSON.stringify(input.includes('/accounts') ? { accounts } : { statements: [] }), { status: 200 })))
     render(<App />)
 
     fireEvent.change(screen.getByLabelText('Contraseña', { exact: false }), { target: { value: 'admin-password' } })
@@ -32,13 +32,14 @@ describe('web session access', () => {
     const analysisTab = screen.getByRole('tab', { name: 'Análisis' })
     expect(analysisTab).toHaveAttribute('aria-controls', 'primary-panel-1')
     fireEvent.click(analysisTab)
-    expect(await screen.findByRole('radiogroup', { name: 'Cartola ancla' })).toBeInTheDocument()
+    expect(await screen.findByRole('combobox', { name: 'Cuenta' })).toBeInTheDocument()
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
   })
 })
 
 describe('analysis dashboard', () => {
   const analysis: Analysis = {
-    scope: { statement_ids: ['one'], from: '2026-01-01', to: '2026-01-31', currency: 'CLP', ruleset_versions: ['1'] },
+    scope: { account_id: 'account-one', statement_ids: ['one'], from: '2026-01-01', to: '2026-01-31', currency: 'CLP', ruleset_versions: ['1'] },
     coverage: { covered_ranges: [{ from: '2026-01-01', to: '2026-01-31' }], gaps: [], partial_months: [] },
     summary: { spending_amount: 300, transaction_count: 3, credits_amount: 20, credits_count: 1, excluded_debits_amount: 10, excluded_debits_count: 1, uncategorized_amount: 50, uncategorized_count: 1, merchant_coverage: { identified_amount: 250, identified_count: 2, unidentified_amount: 50, unidentified_count: 1 }, by_category: [{ category: 'alimentacion', amount: 300, count: 3 }] },
     monthly: [{ month: '2026-01', amount: 300, count: 3, by_category: [{ category: 'alimentacion', amount: 300, count: 3 }], absolute_change: null, percentage_change: null }],
