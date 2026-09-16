@@ -18,6 +18,22 @@ describe('web session access', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar sesión' }))
     await waitFor(() => expect(screen.getByText('Tu balance, bajo control.')).toBeInTheDocument())
   })
+
+  it('provides named landmarks, linked tabs, and an anchor radio group', async () => {
+    const statements = [{ statement_id: 'one', bank: 'Banco de Chile', product: 'Cuenta Vista', masked_account_number: '***1234', currency: 'CLP', period_start: '2026-01-01', period_end: '2026-01-31', created_at: '2026-02-01T12:00:00Z' }]
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Response(JSON.stringify({ statements }), { status: 200 })))
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Contraseña', { exact: false }), { target: { value: 'admin-password' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Iniciar sesión' }))
+
+    await screen.findByRole('heading', { name: 'Zut Balance', level: 1 })
+    expect(screen.getByRole('main')).toBeInTheDocument()
+    const analysisTab = screen.getByRole('tab', { name: 'Análisis' })
+    expect(analysisTab).toHaveAttribute('aria-controls', 'primary-panel-1')
+    fireEvent.click(analysisTab)
+    expect(await screen.findByRole('radiogroup', { name: 'Cartola ancla' })).toBeInTheDocument()
+  })
 })
 
 describe('analysis dashboard', () => {
@@ -50,5 +66,13 @@ describe('analysis dashboard', () => {
     expect(screen.getByText('No hay avisos ni variaciones destacadas para este período.')).toBeInTheDocument()
     expect(screen.getByText('No hay comercios identificados para mostrar.')).toBeInTheDocument()
     expect(screen.getByText('No hay candidatos de recurrencia para mostrar.')).toBeInTheDocument()
+  })
+
+  it('names the merchants table and keeps long merchant content available', () => {
+    const merchant = 'COMERCIO-CON-UN-NOMBRE-MUY-LARGO-SIN-ESPACIOS-PARA-PROBAR-EL-CONTENEDOR'
+    render(<Dashboard analysis={{ ...analysis, top_merchants: [{ merchant_name: merchant, amount: 250, count: 2 }] }} />)
+
+    expect(screen.getByRole('table', { name: 'Comercios principales del período' })).toBeInTheDocument()
+    expect(screen.getByText(merchant)).toBeInTheDocument()
   })
 })

@@ -17,6 +17,7 @@ test('loads a statement, shows analysis, and confirms deletion', async ({ page }
   await expect(page.getByText('Evolución mensual')).toBeVisible()
   await expect(page.getByText('Avisos y destacados')).toBeVisible()
   await expect(page.getByText('Cobertura temporal')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
 
   await page.getByRole('tab', { name: 'Cartolas' }).click()
   await page.getByRole('button', { name: 'Volver al historial' }).click()
