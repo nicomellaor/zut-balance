@@ -404,11 +404,28 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
         "monthly",
         "top_merchants",
         "recurrence_candidates",
-        "insights",
+        "notices",
+        "highlights",
     }
     assert payload["scope"]["currency"] == "CLP"
-    assert payload["insights"]
-    assert payload["insights"][0]["kind"] == "coverage_warning"
+    assert "insights" not in payload
+    coverage_notice, classification_notice = payload["notices"]
+    assert coverage_notice == {
+        "kind": "incomplete_coverage",
+        "severity": "warning",
+        "gaps": [],
+        "partial_months": [created["metadata"]["period_start"][:7]],
+    }
+    assert classification_notice == {
+        "kind": "limited_classification",
+        "severity": "info",
+        "uncategorized_amount": payload["summary"]["uncategorized_amount"],
+        "uncategorized_count": payload["summary"]["uncategorized_count"],
+        "unidentified_merchant_amount": payload["summary"]["merchant_coverage"]["unidentified_amount"],
+        "unidentified_merchant_count": payload["summary"]["merchant_coverage"]["unidentified_count"],
+        "ruleset_versions": payload["scope"]["ruleset_versions"],
+    }
+    assert set(payload["highlights"]) == {"largest_monthly_change"}
     assert "private description" not in response.text
 
 

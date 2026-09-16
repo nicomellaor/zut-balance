@@ -20,9 +20,9 @@ from .analysis import AnalysisScopeError, AnalysisStatement, AnalysisValidationE
 from .auth import verify_administrator_password, validate_web_authentication_settings
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
-from .insights import generate_insights
 from .models import Statement
 from .persistence import DatabaseBusyError, StatementRepository, StoredStatementMetadata
+from .signals import ClassificationNotice, CoverageNotice, generate_signals
 
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
@@ -140,7 +140,7 @@ def _metadata_response(metadata: StoredStatementMetadata) -> dict[str, object]:
 
 
 def _analysis_response(result) -> JSONResponse:
-    insights = generate_insights(result)
+    signals = generate_signals(result)
     return JSONResponse(
         status_code=200,
         content={
@@ -213,20 +213,41 @@ def _analysis_response(result) -> JSONResponse:
                 }
                 for item in result.recurrence_candidates
             ],
-            "insights": [
-                {
-                    "kind": item.kind.value,
-                    "priority": item.priority,
-                    "title": item.title,
-                    "body": item.body,
-                    "evidence": [
-                        {"label": evidence.label, "value": evidence.value}
-                        for evidence in item.evidence
-                    ],
-                    "caveat": item.caveat,
-                }
-                for item in insights
+            "notices": [
+                (
+                    {
+                        "kind": item.kind.value,
+                        "severity": item.severity.value,
+                        "gaps": [{"from": start, "to": end} for start, end in item.gaps],
+                        "partial_months": list(item.partial_months),
+                    }
+                    if isinstance(item, CoverageNotice)
+                    else {
+                        "kind": item.kind.value,
+                        "severity": item.severity.value,
+                        "uncategorized_amount": item.uncategorized_amount,
+                        "uncategorized_count": item.uncategorized_count,
+                        "unidentified_merchant_amount": item.unidentified_merchant_amount,
+                        "unidentified_merchant_count": item.unidentified_merchant_count,
+                        "ruleset_versions": list(item.ruleset_versions),
+                    }
+                )
+                for item in signals.notices
             ],
+            "highlights": {
+                "largest_monthly_change": (
+                    None
+                    if signals.largest_monthly_change is None
+                    else {
+                        "previous_month": signals.largest_monthly_change.previous_month,
+                        "current_month": signals.largest_monthly_change.current_month,
+                        "previous_amount": signals.largest_monthly_change.previous_amount,
+                        "current_amount": signals.largest_monthly_change.current_amount,
+                        "absolute_change": signals.largest_monthly_change.absolute_change,
+                        "percentage_change": signals.largest_monthly_change.percentage_change,
+                    }
+                )
+            },
         },
     )
 

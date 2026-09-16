@@ -3,11 +3,11 @@
 Zut Balance es un proyecto de procesamiento de documentos financieros para
 convertir cartolas bancarias en movimientos normalizados y confiables. Su visión
 es construir una plataforma de inteligencia de gastos que avance desde la
-ingesta determinista de PDFs hasta métricas e insights basados en datos
+ingesta determinista de PDFs hasta métricas y señales basadas en datos
 verificados.
 
 El flujo objetivo es: PDF, extracción, normalización, categorización, análisis
-e insights. La visión, las fases y sus dependencias están en
+y señales. La visión, las fases y sus dependencias están en
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Estado actual
@@ -19,10 +19,11 @@ páginas, períodos que cruzan de año, columnas desplazadas y metadatos
 reordenados. Cada movimiento persistido incorpora una clasificación determinista
 de categoría y comercio cuando una regla lo identifica.
 
-El análisis genera insights estructurados y deterministas sobre cobertura,
-calidad de clasificación, gasto, variaciones, categorías, comercios y candidatos
-de recurrencia. Cada insight incluye evidencia y limitaciones; no entrega
-recomendaciones, predicciones ni conclusiones financieras no verificables.
+El análisis histórico se ancla en una cartola y resuelve automáticamente el
+historial compatible. Expone avisos tipados de cobertura y clasificación, además
+del mayor cambio mensual cuando existe. Las señales son deterministas y no
+entregan recomendaciones, predicciones ni conclusiones financieras no
+verificables.
 
 El parser devuelve una cartola normalizada y conciliada, o un error explícito
 si el PDF no es legible, está protegido, no contiene texto extraíble, no
@@ -142,7 +143,7 @@ La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
   versión de Zut Balance incompatible o futura, falla de forma segura sin
   modificarlo; use una ruta de base nueva o migre la instalación antes de
   reiniciar el servicio.
-- Las categorías, métricas e insights son deterministas y se calculan con
+- Las categorías, métricas y señales son deterministas y se calculan con
   resultados ya clasificados; no hay corrección manual, clasificación por IA,
   LLM ni OCR.
 - Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
@@ -165,8 +166,10 @@ La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
 - [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).
 - [Especificación de análisis](specs/analysis/spec.md).
 - [Plan técnico de análisis](specs/analysis/plan.md).
-- [Especificación de insights](specs/insights/spec.md).
-- [Plan técnico de insights](specs/insights/plan.md).
+- [Especificación histórica de insights](specs/insights/spec.md).
+- [Plan técnico histórico de insights](specs/insights/plan.md).
+- [Especificación de señales de análisis](specs/analysis-signals/spec.md).
+- [Plan técnico de señales de análisis](specs/analysis-signals/plan.md).
 - [Especificación de interfaz](specs/interface/spec.md).
 - [Plan técnico de interfaz](specs/interface/plan.md).
 - [Guía de despliegue Docker](docs/deployment.md).

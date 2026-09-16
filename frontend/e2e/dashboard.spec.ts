@@ -12,10 +12,10 @@ test('loads a statement, shows analysis, and confirms deletion', async ({ page }
   await page.locator('input[type="file"]').setInputFiles('../media/cartola_ejemplo_banco_chile.pdf')
   await expect(page.getByText('Movimientos')).toBeVisible()
   await page.getByRole('tab', { name: 'Análisis' }).click()
-  await page.getByRole('checkbox').check()
+  await page.getByRole('radio').check()
   await page.getByRole('button', { name: 'Actualizar análisis' }).click()
   await expect(page.getByText('Evolución mensual')).toBeVisible()
-  await expect(page.getByText('Hallazgos del período')).toBeVisible()
+  await expect(page.getByText('Avisos y destacados')).toBeVisible()
   await expect(page.getByText('Cobertura temporal')).toBeVisible()
 
   await page.getByRole('tab', { name: 'Cartolas' }).click()

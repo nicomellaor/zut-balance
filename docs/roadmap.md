@@ -44,6 +44,8 @@ La fase 9 añade insights estructurados, deterministas y trazables a la evidenci
 del análisis, sin recomendaciones financieras ni servicios externos.
 La fase 10 resuelve el análisis histórico desde una cartola ancla, incluyendo
 cartolas compatibles de la misma cuenta visible y fronteras mensuales compartidas.
+La fase 11 reemplaza los insights narrativos por avisos y highlights tipados, y
+adapta la SPA al contrato anclado.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -64,14 +66,13 @@ y
 | 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Completada |
 | 9. Insights deterministas | Explicaciones estructuradas sobre métricas y hechos calculados, con evidencia y salvaguardas contra conclusiones inventadas. | Fases 7 y 8. | Completada |
 | 10. Análisis histórico | Ámbito por cuenta, fronteras mensuales compartidas y trazabilidad de cartolas incluidas. | Fase 7. | Completada |
-| 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Planificada |
+| 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Completada |
 
 ## Orden de trabajo
 
-La fase 10 corrigió el ámbito histórico para que varias cartolas de una cuenta
-puedan aportar trazabilidad. La siguiente prioridad es la fase 11, que reemplaza
-los insights narrativos por señales estructuradas. Conserva determinismo,
-privacidad y ausencia de IA o servicios externos.
+La fase 11 completa el contrato de señales estructuradas tras el ámbito histórico
+de la fase 10. Conserva determinismo, privacidad y ausencia de IA o servicios
+externos.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

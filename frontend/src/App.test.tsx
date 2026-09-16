@@ -28,24 +28,26 @@ describe('analysis dashboard', () => {
     monthly: [{ month: '2026-01', amount: 300, count: 3, by_category: [{ category: 'alimentacion', amount: 300, count: 3 }], absolute_change: null, percentage_change: null }],
     top_merchants: [{ merchant_name: 'Market', amount: 250, count: 2 }],
     recurrence_candidates: [{ merchant_name: 'Video', cadence: 'monthly', dates: ['2026-01-01', '2026-01-15', '2026-01-30'], amounts: [10, 10, 10], count: 3, minimum_amount: 10, average_amount: 10, maximum_amount: 10 }],
-    insights: [{ kind: 'data_quality_warning', priority: 1, title: 'Cobertura de clasificación limitada', body: 'El análisis incluye gasto sin categoría.', evidence: [{ label: 'monto_sin_categoria', value: 50 }], caveat: 'Las categorías no representan necesariamente todo el gasto.' }],
+    notices: [{ kind: 'limited_classification', severity: 'info', uncategorized_amount: 50, uncategorized_count: 1, unidentified_merchant_amount: 50, unidentified_merchant_count: 1, ruleset_versions: ['1'] }],
+    highlights: { largest_monthly_change: { previous_month: '2025-12', current_month: '2026-01', previous_amount: 100, current_amount: 300, absolute_change: 200, percentage_change: '200.00' } },
   }
 
-  it('renders metrics, limitations, evidence, merchants, and recurrence candidates', () => {
+  it('renders metrics, notices, highlights, merchants, and recurrence candidates', () => {
     render(<Dashboard analysis={analysis} />)
 
-    expect(screen.getByText('Hallazgos del período')).toBeInTheDocument()
-    expect(screen.getByText(/Cobertura de clasificación limitada/)).toBeInTheDocument()
+    expect(screen.getByText('Avisos y destacados')).toBeInTheDocument()
+    expect(screen.getByText(/Clasificación limitada/)).toBeInTheDocument()
+    expect(screen.getByText(/Mayor variación mensual/)).toBeInTheDocument()
     expect(screen.getByText('Cobertura temporal')).toBeInTheDocument()
     expect(screen.getByText('Comercios principales')).toBeInTheDocument()
     expect(screen.getByText('Candidatos de recurrencia')).toBeInTheDocument()
     expect(screen.getByText(/no confirma una suscripción/i)).toBeInTheDocument()
   })
 
-  it('renders explicit empty states for optional insights, merchants, and recurrence candidates', () => {
-    render(<Dashboard analysis={{ ...analysis, top_merchants: [], recurrence_candidates: [], insights: [] }} />)
+  it('renders explicit empty states for optional signals, merchants, and recurrence candidates', () => {
+    render(<Dashboard analysis={{ ...analysis, top_merchants: [], recurrence_candidates: [], notices: [], highlights: { largest_monthly_change: null } }} />)
 
-    expect(screen.getByText('No hay hallazgos adicionales para este período.')).toBeInTheDocument()
+    expect(screen.getByText('No hay avisos ni variaciones destacadas para este período.')).toBeInTheDocument()
     expect(screen.getByText('No hay comercios identificados para mostrar.')).toBeInTheDocument()
     expect(screen.getByText('No hay candidatos de recurrencia para mostrar.')).toBeInTheDocument()
   })

@@ -15,4 +15,16 @@ describe('API client', () => {
     expect(localStorage.length).toBe(0)
     expect(sessionStorage.length).toBe(0)
   })
+
+  it('uses an anchor and omits empty date filters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.getAnalysis('anchor-id')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/v1/analysis?anchor_statement_id=anchor-id',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+  })
 })
