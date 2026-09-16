@@ -28,7 +28,7 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1 a 9 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
+Las fases 1 a 10 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
 para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
 reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
 conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
@@ -42,6 +42,8 @@ revisar movimientos y explorar esas métricas. El despliegue privado añade Dock
 Compose, TLS interno, sesión web y backups SQLite consistentes. No hay OCR ni IA.
 La fase 9 añade insights estructurados, deterministas y trazables a la evidencia
 del análisis, sin recomendaciones financieras ni servicios externos.
+La fase 10 resuelve el análisis histórico desde una cartola ancla, incluyendo
+cartolas compatibles de la misma cuenta visible y fronteras mensuales compartidas.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -61,13 +63,15 @@ y
 | 7. Análisis | Métricas de gasto, variaciones, comercios principales y detección de recurrencias sobre datos categorizados. | Fase 6. | Completada |
 | 8. Interfaz | Dashboard para cargar, revisar movimientos y explorar métricas. | Fases 3, 4 y 7. | Completada |
 | 9. Insights deterministas | Explicaciones estructuradas sobre métricas y hechos calculados, con evidencia y salvaguardas contra conclusiones inventadas. | Fases 7 y 8. | Completada |
+| 10. Análisis histórico | Ámbito por cuenta, fronteras mensuales compartidas y trazabilidad de cartolas incluidas. | Fase 7. | Completada |
+| 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Planificada |
 
 ## Orden de trabajo
 
-La fase 9 cerró el alcance inicial con explicaciones estructuradas sobre hechos
-calculados, sin introducir conclusiones financieras inventadas. No se incorporó
-IA ni servicios externos: las reglas y textos son reproducibles y trazables a la
-evidencia expuesta por el análisis.
+La fase 10 corrigió el ámbito histórico para que varias cartolas de una cuenta
+puedan aportar trazabilidad. La siguiente prioridad es la fase 11, que reemplaza
+los insights narrativos por señales estructuradas. Conserva determinismo,
+privacidad y ausencia de IA o servicios externos.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

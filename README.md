@@ -97,16 +97,18 @@ adicionales son:
   y 100, sin movimientos.
 - `DELETE /v1/statements/{statement_id}`: elimina permanentemente la cartola y
   sus movimientos, y devuelve `204`.
-- `GET /v1/analysis?statement_id=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD`: calcula
-  al vuelo métricas de gasto, evolución mensual, comercios y recurrencias para
-  entre una y cien cartolas compatibles y sin períodos solapados. La respuesta
-  incluye insights estructurados, ordenados y limitados a cinco, calculados sobre
-  esas mismas métricas.
+- `GET /v1/analysis?anchor_statement_id=<id>[&from=YYYY-MM-DD][&to=YYYY-MM-DD]`:
+  calcula al vuelo métricas de gasto, evolución mensual, comercios y recurrencias
+  para todas las cartolas compatibles con la cuenta visible de la cartola ancla.
+  Sin fechas, usa todo el historial disponible; las fechas opcionales son
+  inclusivas. Fronteras mensuales compartidas se aceptan, pero solapamientos
+  reales se rechazan. La respuesta declara las cartolas incluidas en
+  `scope.statement_ids`.
 
 El análisis incluye débitos de consumo, comisiones y movimientos sin categoría;
 informa créditos, transferencias, retiros e ingresos por separado. No persiste
 resultados ni expone descripciones o cuentas. Los rangos son inclusivos y no
-pueden superar 24 meses.
+tienen límite artificial de meses o cartolas.
 
 ## Interfaz web de desarrollo
 

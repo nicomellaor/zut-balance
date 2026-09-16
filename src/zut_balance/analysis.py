@@ -9,8 +9,6 @@ from calendar import monthrange
 from .models import Category, Statement, Transaction
 
 
-MAX_STATEMENTS = 100
-MAX_MONTHS = 24
 TOP_MERCHANT_LIMIT = 10
 _EXPENSE_CATEGORIES = frozenset(
     {
@@ -178,15 +176,13 @@ def analyze_statements(
 def _validate_scope(
     statements: tuple[AnalysisStatement, ...], from_date: date, to_date: date
 ) -> AnalysisScope:
-    if not statements or len(statements) > MAX_STATEMENTS:
-        raise AnalysisValidationError("statement_ids must contain between 1 and 100 values")
+    if not statements:
+        raise AnalysisValidationError("statements must not be empty")
     ids = tuple(item.id for item in statements)
     if len(set(ids)) != len(ids):
         raise AnalysisValidationError("statement_ids must be unique")
     if from_date > to_date:
         raise AnalysisValidationError("from must not be after to")
-    if to_date > _add_months(from_date, MAX_MONTHS) - timedelta(days=1):
-        raise AnalysisValidationError("date range must not exceed 24 months")
     first = statements[0].statement
     if first.currency != "PESOS":
         raise AnalysisScopeError("currency is not supported")
@@ -204,7 +200,7 @@ def _validate_scope(
         ):
             raise AnalysisScopeError("statement account scope is ambiguous")
     periods = sorted((item.statement.period_start, item.statement.period_end) for item in statements)
-    if any(current[0] <= previous[1] for previous, current in zip(periods, periods[1:])):
+    if any(current[0] < previous[1] for previous, current in zip(periods, periods[1:])):
         raise AnalysisScopeError("statement periods overlap")
     versions = tuple(
         sorted(

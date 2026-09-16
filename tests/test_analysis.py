@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -184,15 +184,56 @@ def test_analysis_rejects_incompatible_multi_statement_accounts() -> None:
         (
             (
                 _statement("one", date(2026, 1, 1), date(2026, 1, 31), ()),
-                _statement("two", date(2026, 1, 31), date(2026, 2, 28), ()),
+                _statement("two", date(2026, 1, 30), date(2026, 2, 28), ()),
             ),
             date(2026, 1, 1),
             date(2026, 2, 28),
         ),
     ],
 )
-def test_analysis_rejects_empty_or_overlapping_scope(
+def test_analysis_rejects_empty_or_truly_overlapping_scope(
     statements: tuple[AnalysisStatement, ...], from_date: date, to_date: date
 ) -> None:
     with pytest.raises(AnalysisError):
         analyze_statements(statements, from_date, to_date)
+
+
+def test_analysis_accepts_shared_period_boundary_and_counts_each_statement() -> None:
+    statements = (
+        _statement(
+            "july",
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+            (_transaction(date(2026, 7, 31), 100, Category.FOOD),),
+        ),
+        _statement(
+            "august",
+            date(2026, 7, 31),
+            date(2026, 8, 31),
+            (_transaction(date(2026, 7, 31), 200, Category.FOOD),),
+        ),
+    )
+
+    result = analyze_statements(statements, date(2026, 7, 1), date(2026, 8, 31))
+
+    assert result.scope.statement_ids == ("july", "august")
+    assert result.spending.amount == 300
+    assert result.coverage.gaps == ()
+
+
+def test_analysis_has_no_statement_or_month_range_limit() -> None:
+    start = date(2020, 1, 1)
+    statements = tuple(
+        _statement(
+            str(index),
+            start + timedelta(days=index),
+            start + timedelta(days=index),
+            (),
+        )
+        for index in range(101)
+    )
+
+    result = analyze_statements(statements, start, date(2030, 1, 1))
+
+    assert len(result.scope.statement_ids) == 101
+    assert result.scope.to_date == date(2030, 1, 1)

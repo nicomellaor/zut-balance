@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import re
 import sqlite3
@@ -13,7 +15,7 @@ from zut_balance.api import MAX_FILE_SIZE_BYTES, ServiceSettings, create_app
 from zut_balance.banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from zut_balance.categorization import classify_transaction
 from zut_balance.errors import UnsupportedStatementError
-from zut_balance.persistence import DatabaseBusyError
+from zut_balance.persistence import DatabaseBusyError, StatementRepository
 from argon2 import PasswordHasher
 
 
@@ -56,6 +58,25 @@ def _transaction_response(transaction):
             "ruleset_version": classification.ruleset_version,
         },
     }
+
+
+def _historical_statement(period_start: date, period_end: date, transaction_date: date, account: str = "****1234"):
+    base = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    debit = next(transaction for transaction in base.transactions if transaction.movement_type.value == "debit")
+    return replace(
+        base,
+        masked_account_number=account,
+        period_start=period_start,
+        period_end=period_end,
+        transactions=(replace(debit, date=transaction_date, description="COMPRA"),),
+    )
+
+
+def _historical_client(tmp_path: Path) -> tuple[TestClient, StatementRepository]:
+    database_path = tmp_path / "historical.sqlite3"
+    repository = StatementRepository(database_path)
+    repository.initialize()
+    return TestClient(create_app(ServiceSettings(database_path, API_KEY))), repository
 
 
 def test_health_reports_service_availability_without_authentication(client: TestClient) -> None:
@@ -366,7 +387,7 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
     response = client.get(
         "/v1/analysis",
         params=[
-            ("statement_id", created["statement_id"]),
+            ("anchor_statement_id", created["statement_id"]),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -394,7 +415,7 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
 def test_analysis_rejects_invalid_parameters_and_missing_statements(client: TestClient) -> None:
     invalid = client.get("/v1/analysis", headers=AUTHORIZATION)
     missing = client.get(
-        "/v1/analysis?statement_id=missing&from=2026-01-01&to=2026-01-31",
+        "/v1/analysis?anchor_statement_id=missing",
         headers=AUTHORIZATION,
     )
 
@@ -412,7 +433,7 @@ def test_analysis_reflects_statement_deletion_immediately(client: TestClient) ->
     response = client.get(
         "/v1/analysis",
         params=[
-            ("statement_id", statement_id),
+            ("anchor_statement_id", statement_id),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -437,7 +458,7 @@ def test_analysis_does_not_modify_sqlite(tmp_path: Path) -> None:
     response = client.get(
         "/v1/analysis",
         params=[
-            ("statement_id", created["statement_id"]),
+            ("anchor_statement_id", created["statement_id"]),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -453,6 +474,110 @@ def test_analysis_does_not_modify_sqlite(tmp_path: Path) -> None:
         )
     assert response.status_code == 200
     assert after == before
+
+
+def test_analysis_resolves_anchor_history_and_filters_dates(tmp_path: Path) -> None:
+    client, repository = _historical_client(tmp_path)
+    first = repository.save(
+        _historical_statement(date(2026, 7, 1), date(2026, 7, 31), date(2026, 7, 31)),
+        "a" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    second = repository.save(
+        _historical_statement(date(2026, 7, 31), date(2026, 8, 31), date(2026, 8, 1)),
+        "b" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    repository.save(
+        _historical_statement(date(2026, 6, 1), date(2026, 6, 30), date(2026, 6, 2), account="****9876"),
+        "c" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+
+    response = client.get("/v1/analysis", params={"anchor_statement_id": second.id}, headers=AUTHORIZATION)
+    filtered = client.get(
+        "/v1/analysis",
+        params={"anchor_statement_id": second.id, "from": "2026-08-01"},
+        headers=AUTHORIZATION,
+    )
+
+    assert response.status_code == filtered.status_code == 200
+    assert response.json()["scope"] == {
+        "statement_ids": [first.id, second.id],
+        "from": "2026-07-01",
+        "to": "2026-08-31",
+        "currency": "CLP",
+        "ruleset_versions": ["1"],
+    }
+    assert response.json()["summary"]["transaction_count"] == 2
+    assert response.json()["coverage"]["gaps"] == []
+    assert "COMPRA" not in response.text
+    assert filtered.json()["scope"]["statement_ids"] == [second.id]
+    assert filtered.json()["scope"]["from"] == "2026-08-01"
+    assert filtered.json()["scope"]["to"] == "2026-08-31"
+
+
+def test_analysis_rejects_manual_scope_and_range_without_history(tmp_path: Path) -> None:
+    client, repository = _historical_client(tmp_path)
+    stored = repository.save(
+        _historical_statement(date(2026, 7, 1), date(2026, 7, 31), date(2026, 7, 2)),
+        "d" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+
+    manual = client.get("/v1/analysis", params={"statement_id": stored.id}, headers=AUTHORIZATION)
+    unavailable = client.get(
+        "/v1/analysis",
+        params={"anchor_statement_id": stored.id, "from": "2030-01-01", "to": "2030-01-31"},
+        headers=AUTHORIZATION,
+    )
+
+    assert manual.status_code == unavailable.status_code == 400
+    assert unavailable.json()["error"]["code"] == "history_not_available"
+
+
+def test_analysis_reflects_historical_statement_deletion(tmp_path: Path) -> None:
+    client, repository = _historical_client(tmp_path)
+    first = repository.save(
+        _historical_statement(date(2026, 7, 1), date(2026, 7, 31), date(2026, 7, 2)),
+        "e" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    second = repository.save(
+        _historical_statement(date(2026, 7, 31), date(2026, 8, 31), date(2026, 8, 2)),
+        "f" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+
+    assert client.delete(f"/v1/statements/{first.id}", headers=AUTHORIZATION).status_code == 204
+    response = client.get("/v1/analysis", params={"anchor_statement_id": second.id}, headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+    assert response.json()["scope"]["statement_ids"] == [second.id]
+
+
+def test_analysis_anchor_has_no_artificial_history_limit(tmp_path: Path) -> None:
+    client, repository = _historical_client(tmp_path)
+    start = date(2020, 1, 1)
+    base = _historical_statement(start, start, start)
+    stored = tuple(
+        repository.save(
+            replace(
+                base,
+                period_start=start + timedelta(days=index),
+                period_end=start + timedelta(days=index),
+                transactions=(replace(base.transactions[0], date=start + timedelta(days=index)),),
+            ),
+            f"{index:064x}",
+            datetime.now(UTC).isoformat(),
+        )
+        for index in range(101)
+    )
+
+    response = client.get("/v1/analysis", params={"anchor_statement_id": stored[-1].id}, headers=AUTHORIZATION)
+
+    assert response.status_code == 200
+    assert response.json()["scope"]["statement_ids"] == [item.id for item in stored]
 
 
 def test_statement_upload_rejects_invalid_pdf_without_parser_details(client: TestClient) -> None:

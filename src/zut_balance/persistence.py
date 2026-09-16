@@ -202,6 +202,28 @@ class StatementRepository:
                 if statement_id in rows
             )
 
+    def history_for_anchor(self, anchor: StoredStatement) -> tuple[StoredStatement, ...]:
+        """Return the chronologically ordered history with the anchor's visible account."""
+        account = anchor.statement.masked_account_number
+        if account is None or not any(character.isdigit() for character in account):
+            return (anchor,)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM statements
+                WHERE bank = ? AND product = ? AND currency IS ?
+                  AND masked_account_number = ?
+                ORDER BY period_start, period_end, id
+                """,
+                (
+                    anchor.statement.bank,
+                    anchor.statement.product,
+                    anchor.statement.currency,
+                    account,
+                ),
+            ).fetchall()
+            return tuple(self._stored_statement(connection, row) for row in rows)
+
     def save(self, statement: Statement, source_sha256: str, created_at: str) -> StoredStatement:
         statement_id = str(uuid4())
         classified_transactions: list[Transaction] = []

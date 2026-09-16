@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -158,6 +158,35 @@ def test_repository_get_many_preserves_requested_order_and_omits_missing_ids(tmp
 
     assert tuple(item.id for item in stored) == (second.id, first.id)
     assert all(transaction.classification is not None for item in stored for transaction in item.statement.transactions)
+
+
+def test_repository_resolves_visible_account_history_in_period_order(tmp_path: Path) -> None:
+    repository = StatementRepository(tmp_path / "statements.sqlite3")
+    repository.initialize()
+    base = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    first = repository.save(
+        replace(base, masked_account_number="****1234", period_start=date(2026, 6, 30), period_end=date(2026, 7, 31)),
+        "k" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    second = repository.save(
+        replace(base, masked_account_number="****1234", period_start=date(2026, 7, 31), period_end=date(2026, 8, 31)),
+        "l" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    repository.save(
+        replace(base, masked_account_number="****9876", period_start=date(2026, 6, 1), period_end=date(2026, 6, 30)),
+        "m" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+    hidden = repository.save(
+        replace(base, masked_account_number="XXXXXXXX", period_start=date(2026, 5, 1), period_end=date(2026, 5, 31)),
+        "n" * 64,
+        datetime.now(UTC).isoformat(),
+    )
+
+    assert tuple(item.id for item in repository.history_for_anchor(second)) == (first.id, second.id)
+    assert repository.history_for_anchor(hidden) == (hidden,)
 
 
 def test_repository_migrates_v1_data_to_v2_classifications(tmp_path: Path) -> None:

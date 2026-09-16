@@ -414,20 +414,40 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
         if access_error is not None:
             return access_error
         assert repository is not None
-        statement_ids = tuple(request.query_params.getlist("statement_id"))
-        if not statement_ids or len(statement_ids) > 100 or len(set(statement_ids)) != len(statement_ids):
+        anchor_ids = tuple(request.query_params.getlist("anchor_statement_id"))
+        if len(anchor_ids) != 1 or request.query_params.getlist("statement_id"):
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
         try:
-            from_date = date.fromisoformat(request.query_params["from"])
-            to_date = date.fromisoformat(request.query_params["to"])
-        except (KeyError, ValueError):
+            from_date = (
+                date.fromisoformat(request.query_params["from"])
+                if "from" in request.query_params
+                else None
+            )
+            to_date = (
+                date.fromisoformat(request.query_params["to"])
+                if "to" in request.query_params
+                else None
+            )
+        except ValueError:
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
-        stored = repository.get_many(statement_ids)
-        if len(stored) != len(statement_ids):
-            return _error_response(404, "statement_not_found", "A requested statement was not found")
+        anchor = repository.get(anchor_ids[0])
+        if anchor is None:
+            return _error_response(404, "statement_not_found", "The anchor statement was not found")
+        history = repository.history_for_anchor(anchor)
+        effective_from = from_date or history[0].statement.period_start
+        effective_to = to_date or history[-1].statement.period_end
+        if effective_from > effective_to:
+            return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
+        stored = tuple(
+            item
+            for item in history
+            if item.statement.period_end >= effective_from and item.statement.period_start <= effective_to
+        )
+        if not stored:
+            return _error_response(400, "history_not_available", "No statement history is available for the requested range")
         try:
             result = analyze_statements(
-                tuple(AnalysisStatement(item.id, item.statement) for item in stored), from_date, to_date
+                tuple(AnalysisStatement(item.id, item.statement) for item in stored), effective_from, effective_to
             )
         except AnalysisValidationError:
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
