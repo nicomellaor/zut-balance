@@ -167,13 +167,24 @@ def test_analysis_detects_weekly_candidates_and_rejects_irregular_sequences() ->
     ]
 
 
-def test_analysis_rejects_incompatible_multi_statement_accounts() -> None:
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"bank": "Otro banco"}, "incompatible"),
+        ({"product": "Otro producto"}, "incompatible"),
+        ({"currency": "USD"}, "incompatible"),
+        ({"account": "****9876"}, "ambiguous"),
+    ],
+)
+def test_analysis_rejects_incompatible_multi_statement_accounts(
+    override: dict[str, str], message: str
+) -> None:
     statements = (
-        _statement("one", date(2026, 1, 1), date(2026, 1, 31), (), account="****1234"),
-        _statement("two", date(2026, 2, 1), date(2026, 2, 28), (), account="****9876"),
+        _statement("one", date(2026, 1, 1), date(2026, 1, 31), ()),
+        _statement("two", date(2026, 2, 1), date(2026, 2, 28), (), **override),
     )
 
-    with pytest.raises(AnalysisError, match="ambiguous"):
+    with pytest.raises(AnalysisError, match=message):
         analyze_statements(statements, date(2026, 1, 1), date(2026, 2, 28))
 
 

@@ -5,6 +5,7 @@ from io import BytesIO
 import os
 from pathlib import Path
 import secrets
+from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,12 @@ from .auth import verify_administrator_password, validate_web_authentication_set
 from .banco_chile_cuenta_vista import parse_banco_chile_cuenta_vista
 from .errors import StatementError
 from .models import Statement
-from .persistence import DatabaseBusyError, StatementRepository, StoredStatementMetadata
+from .persistence import (
+    DatabaseBusyError,
+    StatementRepository,
+    StoredAccountMetadata,
+    StoredStatementMetadata,
+)
 from .signals import ClassificationNotice, CoverageNotice, generate_signals
 
 
@@ -139,12 +145,28 @@ def _metadata_response(metadata: StoredStatementMetadata) -> dict[str, object]:
     }
 
 
-def _analysis_response(result) -> JSONResponse:
+def _account_response(account: StoredAccountMetadata) -> dict[str, object]:
+    currency = "CLP" if account.currency == "PESOS" else account.currency or None
+    return {
+        "account_id": account.id,
+        "bank": account.bank,
+        "product": account.product,
+        "currency": currency,
+        "masked_account_number": account.masked_account_number,
+        "identity_status": account.identity_status,
+        "statement_count": account.statement_count,
+        "period_start": account.period_start.isoformat(),
+        "period_end": account.period_end.isoformat(),
+    }
+
+
+def _analysis_response(result, account_id: str) -> JSONResponse:
     signals = generate_signals(result)
     return JSONResponse(
         status_code=200,
         content={
             "scope": {
+                "account_id": account_id,
                 "statement_ids": list(result.scope.statement_ids),
                 "from": result.scope.from_date.isoformat(),
                 "to": result.scope.to_date.isoformat(),
@@ -429,16 +451,28 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/v1/accounts")
+    def list_accounts(request: Request) -> JSONResponse:
+        access_error = require_data_access(request)
+        if access_error is not None:
+            return access_error
+        assert repository is not None
+        return JSONResponse(status_code=200, content={"accounts": [_account_response(account) for account in repository.list_accounts()]})
+
     @app.get("/v1/analysis")
     def get_analysis(request: Request) -> JSONResponse:
         access_error = require_data_access(request)
         if access_error is not None:
             return access_error
         assert repository is not None
-        anchor_ids = tuple(request.query_params.getlist("anchor_statement_id"))
-        if len(anchor_ids) != 1 or request.query_params.getlist("statement_id"):
+        allowed_parameters = {"account_id", "from", "to"}
+        if any(key not in allowed_parameters for key, _ in request.query_params.multi_items()):
+            return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
+        account_ids = tuple(request.query_params.getlist("account_id"))
+        if len(account_ids) != 1 or any(len(request.query_params.getlist(name)) > 1 for name in ("from", "to")):
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
         try:
+            account_id = str(UUID(account_ids[0]))
             from_date = (
                 date.fromisoformat(request.query_params["from"])
                 if "from" in request.query_params
@@ -451,19 +485,14 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
             )
         except ValueError:
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
-        anchor = repository.get(anchor_ids[0])
-        if anchor is None:
-            return _error_response(404, "statement_not_found", "The anchor statement was not found")
-        history = repository.history_for_anchor(anchor)
-        effective_from = from_date or history[0].statement.period_start
-        effective_to = to_date or history[-1].statement.period_end
+        account = repository.get_account(account_id)
+        if account is None:
+            return _error_response(404, "account_not_found", "The account was not found")
+        effective_from = from_date or account.period_start
+        effective_to = to_date or account.period_end
         if effective_from > effective_to:
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
-        stored = tuple(
-            item
-            for item in history
-            if item.statement.period_end >= effective_from and item.statement.period_start <= effective_to
-        )
+        stored = repository.history_for_account(account_id, effective_from, effective_to)
         if not stored:
             return _error_response(400, "history_not_available", "No statement history is available for the requested range")
         try:
@@ -474,7 +503,7 @@ def create_app(settings: ServiceSettings | None = None) -> FastAPI:
             return _error_response(400, "invalid_analysis_query", "Analysis parameters are invalid")
         except AnalysisScopeError:
             return _error_response(409, "invalid_analysis_scope", "The selected statements cannot be analyzed together")
-        return _analysis_response(result)
+        return _analysis_response(result, account_id)
 
     @app.delete(
         "/v1/statements/{statement_id}",

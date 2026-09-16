@@ -41,6 +41,12 @@ def _upload(client: TestClient, content: bytes, **kwargs: object):
     )
 
 
+def _only_account_id(client: TestClient) -> str:
+    accounts = client.get("/v1/accounts", headers=AUTHORIZATION).json()["accounts"]
+    assert len(accounts) == 1
+    return accounts[0]["account_id"]
+
+
 def _transaction_response(transaction):
     classification = classify_transaction(transaction, "")
     return {
@@ -379,6 +385,25 @@ def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:
     assert client.get("/v1/statements?offset=invalid", headers=AUTHORIZATION).status_code == 400
 
 
+def test_account_catalog_requires_authentication_and_normalizes_currency(tmp_path: Path) -> None:
+    client, repository = _historical_client(tmp_path)
+    assert client.get("/v1/accounts").status_code == 401
+    assert client.get("/v1/accounts", headers=AUTHORIZATION).json() == {"accounts": []}
+    base = _historical_statement(date(2026, 7, 1), date(2026, 7, 31), date(2026, 7, 2))
+    repository.save(replace(base, currency="PESOS"), "1" * 64, datetime.now(UTC).isoformat())
+    repository.save(replace(base, currency=None), "2" * 64, datetime.now(UTC).isoformat())
+    repository.save(replace(base, currency=""), "3" * 64, datetime.now(UTC).isoformat())
+    repository.save(replace(base, currency="USD"), "4" * 64, datetime.now(UTC).isoformat())
+
+    accounts = client.get("/v1/accounts", headers=AUTHORIZATION).json()["accounts"]
+
+    assert {account["currency"] for account in accounts} == {"CLP", None, "USD"}
+    assert all(set(account) == {
+        "account_id", "bank", "product", "currency", "masked_account_number",
+        "identity_status", "statement_count", "period_start", "period_end",
+    } for account in accounts)
+
+
 def test_analysis_requires_authentication_and_returns_safe_aggregates(client: TestClient) -> None:
     content = FIXTURE_PDF.read_bytes()
     created = _upload(client, content).json()
@@ -387,7 +412,7 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
     response = client.get(
         "/v1/analysis",
         params=[
-            ("anchor_statement_id", created["statement_id"]),
+            ("account_id", _only_account_id(client)),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -408,6 +433,7 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
         "highlights",
     }
     assert payload["scope"]["currency"] == "CLP"
+    assert payload["scope"]["account_id"] == _only_account_id(client)
     assert "insights" not in payload
     coverage_notice, classification_notice = payload["notices"]
     assert coverage_notice == {
@@ -432,25 +458,44 @@ def test_analysis_requires_authentication_and_returns_safe_aggregates(client: Te
 def test_analysis_rejects_invalid_parameters_and_missing_statements(client: TestClient) -> None:
     invalid = client.get("/v1/analysis", headers=AUTHORIZATION)
     missing = client.get(
-        "/v1/analysis?anchor_statement_id=missing",
+        "/v1/analysis?account_id=00000000-0000-0000-0000-000000000000",
         headers=AUTHORIZATION,
     )
 
     assert invalid.status_code == 400
     assert invalid.json()["error"]["code"] == "invalid_analysis_query"
     assert missing.status_code == 404
-    assert missing.json()["error"]["code"] == "statement_not_found"
+    assert missing.json()["error"]["code"] == "account_not_found"
+
+
+def test_analysis_rejects_obsolete_duplicate_and_invalid_query_parameters(client: TestClient) -> None:
+    _upload(client, FIXTURE_PDF.read_bytes())
+    account_id = _only_account_id(client)
+    invalid_queries = (
+        [("anchor_statement_id", "legacy")],
+        [("statement_id", "legacy")],
+        [("account_id", account_id), ("account_id", account_id)],
+        [("account_id", account_id), ("from", "2026-01-01"), ("from", "2026-02-01")],
+        [("account_id", "not-a-uuid")],
+        [("account_id", account_id), ("from", "2026-02-01"), ("to", "2026-01-01")],
+    )
+
+    for query in invalid_queries:
+        response = client.get("/v1/analysis", params=query, headers=AUTHORIZATION)
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "invalid_analysis_query"
 
 
 def test_analysis_reflects_statement_deletion_immediately(client: TestClient) -> None:
     created = _upload(client, FIXTURE_PDF.read_bytes()).json()
+    account_id = _only_account_id(client)
     statement_id = created["statement_id"]
     client.delete(f"/v1/statements/{statement_id}", headers=AUTHORIZATION)
 
     response = client.get(
         "/v1/analysis",
         params=[
-            ("anchor_statement_id", statement_id),
+            ("account_id", account_id),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -475,7 +520,7 @@ def test_analysis_does_not_modify_sqlite(tmp_path: Path) -> None:
     response = client.get(
         "/v1/analysis",
         params=[
-            ("anchor_statement_id", created["statement_id"]),
+            ("account_id", _only_account_id(client)),
             ("from", created["metadata"]["period_start"]),
             ("to", created["metadata"]["period_end"]),
         ],
@@ -511,15 +556,18 @@ def test_analysis_resolves_anchor_history_and_filters_dates(tmp_path: Path) -> N
         datetime.now(UTC).isoformat(),
     )
 
-    response = client.get("/v1/analysis", params={"anchor_statement_id": second.id}, headers=AUTHORIZATION)
+    account_id = repository.account_id_for_statement(second.id)
+    assert account_id is not None
+    response = client.get("/v1/analysis", params={"account_id": account_id}, headers=AUTHORIZATION)
     filtered = client.get(
         "/v1/analysis",
-        params={"anchor_statement_id": second.id, "from": "2026-08-01"},
+        params={"account_id": account_id, "from": "2026-08-01"},
         headers=AUTHORIZATION,
     )
 
     assert response.status_code == filtered.status_code == 200
     assert response.json()["scope"] == {
+        "account_id": account_id,
         "statement_ids": [first.id, second.id],
         "from": "2026-07-01",
         "to": "2026-08-31",
@@ -542,10 +590,12 @@ def test_analysis_rejects_manual_scope_and_range_without_history(tmp_path: Path)
         datetime.now(UTC).isoformat(),
     )
 
+    account_id = repository.account_id_for_statement(stored.id)
+    assert account_id is not None
     manual = client.get("/v1/analysis", params={"statement_id": stored.id}, headers=AUTHORIZATION)
     unavailable = client.get(
         "/v1/analysis",
-        params={"anchor_statement_id": stored.id, "from": "2030-01-01", "to": "2030-01-31"},
+        params={"account_id": account_id, "from": "2030-01-01", "to": "2030-01-31"},
         headers=AUTHORIZATION,
     )
 
@@ -567,7 +617,9 @@ def test_analysis_reflects_historical_statement_deletion(tmp_path: Path) -> None
     )
 
     assert client.delete(f"/v1/statements/{first.id}", headers=AUTHORIZATION).status_code == 204
-    response = client.get("/v1/analysis", params={"anchor_statement_id": second.id}, headers=AUTHORIZATION)
+    account_id = repository.account_id_for_statement(second.id)
+    assert account_id is not None
+    response = client.get("/v1/analysis", params={"account_id": account_id}, headers=AUTHORIZATION)
 
     assert response.status_code == 200
     assert response.json()["scope"]["statement_ids"] == [second.id]
@@ -591,7 +643,9 @@ def test_analysis_anchor_has_no_artificial_history_limit(tmp_path: Path) -> None
         for index in range(101)
     )
 
-    response = client.get("/v1/analysis", params={"anchor_statement_id": stored[-1].id}, headers=AUTHORIZATION)
+    account_id = repository.account_id_for_statement(stored[-1].id)
+    assert account_id is not None
+    response = client.get("/v1/analysis", params={"account_id": account_id}, headers=AUTHORIZATION)
 
     assert response.status_code == 200
     assert response.json()["scope"]["statement_ids"] == [item.id for item in stored]

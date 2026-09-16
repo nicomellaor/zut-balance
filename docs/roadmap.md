@@ -11,7 +11,7 @@ El flujo objetivo es:
 
 ```text
 Cartola PDF -> ingesta y validación -> normalización -> categorización
--> análisis -> insights -> interfaz de usuario
+-> análisis -> señales -> interfaz de usuario
 ```
 
 La IA no debe interpretar documentos financieros sin procesar ni generar
@@ -28,7 +28,7 @@ sobre hechos calculados por componentes deterministas.
 
 ## Estado actual
 
-Las fases 1 a 10 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
+Las fases 1 a 11 y el despliegue privado están completados: existe una librería Python, un servicio HTTP
 para la cartola digital de Cuenta Vista Banco de Chile. El parser valida el PDF,
 reconoce el formato, normaliza sus movimientos, enmascara la cuenta y exige
 conciliación general. La fase 2 añadió variantes sintéticas de varias páginas,
@@ -46,6 +46,10 @@ La fase 10 resuelve el análisis histórico desde una cartola ancla, incluyendo
 cartolas compatibles de la misma cuenta visible y fronteras mensuales compartidas.
 La fase 11 reemplaza los insights narrativos por avisos y highlights tipados, y
 adapta la SPA al contrato anclado.
+
+La fase 12 está completada: reemplaza la cartola ancla por un ámbito persistido
+de cuenta y un catálogo autenticado. La fase 13 sigue planificada y adaptará la
+SPA a ese contrato, automatizará la consulta y priorizará resumen y gráficos.
 
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
@@ -67,12 +71,14 @@ y
 | 9. Insights deterministas | Explicaciones estructuradas sobre métricas y hechos calculados, con evidencia y salvaguardas contra conclusiones inventadas. | Fases 7 y 8. | Completada |
 | 10. Análisis histórico | Ámbito por cuenta, fronteras mensuales compartidas y trazabilidad de cartolas incluidas. | Fase 7. | Completada |
 | 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Completada |
+| 12. Análisis por cuenta | Identidad opaca de ámbito, catálogo de cuentas y reemplazo de `anchor_statement_id` por `account_id`. | Fases 4, 10 y 11. | Completada |
+| 13. Flujo del dashboard | Selector compacto de cuenta, análisis automático y jerarquía centrada en resumen y gráficos. | Fases 8, 11 y 12. | Planificada |
 
 ## Orden de trabajo
 
-La fase 11 completa el contrato de señales estructuradas tras el ámbito histórico
-de la fase 10. Conserva determinismo, privacidad y ausencia de IA o servicios
-externos.
+La fase 13 depende de la fase 12 y debe adaptar la SPA al contrato incompatible
+basado en `account_id`. El backend conserva determinismo y privacidad; la fase
+de interfaz no recalcula resultados.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

@@ -19,8 +19,8 @@ páginas, períodos que cruzan de año, columnas desplazadas y metadatos
 reordenados. Cada movimiento persistido incorpora una clasificación determinista
 de categoría y comercio cuando una regla lo identifica.
 
-El análisis histórico se ancla en una cartola y resuelve automáticamente el
-historial compatible. Expone avisos tipados de cobertura y clasificación, además
+El análisis histórico selecciona un ámbito persistido de cuenta mediante un
+identificador opaco y resuelve automáticamente el historial compatible. Expone avisos tipados de cobertura y clasificación, además
 del mayor cambio mensual cuando existe. Las señales son deterministas y no
 entregan recomendaciones, predicciones ni conclusiones financieras no
 verificables.
@@ -98,13 +98,18 @@ adicionales son:
   y 100, sin movimientos.
 - `DELETE /v1/statements/{statement_id}`: elimina permanentemente la cartola y
   sus movimientos, y devuelve `204`.
-- `GET /v1/analysis?anchor_statement_id=<id>[&from=YYYY-MM-DD][&to=YYYY-MM-DD]`:
+- `GET /v1/accounts`: devuelve el catálogo autenticado y deduplicado de ámbitos
+  compatibles, con metadatos enmascarados únicamente.
+- `GET /v1/analysis?account_id=<uuid>[&from=YYYY-MM-DD][&to=YYYY-MM-DD]`:
   calcula al vuelo métricas de gasto, evolución mensual, comercios y recurrencias
-  para todas las cartolas compatibles con la cuenta visible de la cartola ancla.
+  para todas las cartolas del ámbito seleccionado.
   Sin fechas, usa todo el historial disponible; las fechas opcionales son
   inclusivas. Fronteras mensuales compartidas se aceptan, pero solapamientos
   reales se rechazan. La respuesta declara las cartolas incluidas en
-  `scope.statement_ids`.
+  `scope.account_id` y `scope.statement_ids`, estos últimos en orden cronológico.
+
+El identificador de cuenta es un ámbito compatible opaco, no una prueba de
+identidad bancaria ni un número de cuenta derivado.
 
 El análisis incluye débitos de consumo, comisiones y movimientos sin categoría;
 informa créditos, transferencias, retiros e ingresos por separado. No persiste
@@ -153,7 +158,7 @@ La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
 ## Documentación
 
 - [Roadmap del proyecto](docs/roadmap.md): visión, prioridades y fases futuras.
-- [Esquema de base de datos](docs/database-schema.md): tablas SQLite vigentes y la próxima migración planificada.
+- [Esquema de base de datos](docs/database-schema.md): tablas SQLite y migraciones vigentes.
 - [Especificación de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/spec.md).
 - [Plan técnico de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/plan.md).
 - [Especificación de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/spec.md).

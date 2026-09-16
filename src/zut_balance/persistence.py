@@ -12,29 +12,40 @@ from .categorization import classify_transaction
 from .models import Category, Classification, MovementType, Statement, StatementSummary, Transaction
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_LOCK_RETRIES = 3
 LOCK_RETRY_DELAY_SECONDS = 0.01
 
-_STATEMENT_COLUMNS = frozenset(
+_V1_STATEMENT_COLUMN_SEQUENCE = (
+    "id",
+    "source_sha256",
+    "created_at",
+    "bank",
+    "product",
+    "masked_account_number",
+    "currency",
+    "period_start",
+    "period_end",
+    "statement_number",
+    "page_number",
+    "total_pages",
+    "opening_balance",
+    "closing_balance",
+    "one_day_retention",
+    "multi_day_retention",
+    "available_balance",
+)
+_V1_STATEMENT_COLUMNS = frozenset(_V1_STATEMENT_COLUMN_SEQUENCE)
+_STATEMENT_COLUMNS = _V1_STATEMENT_COLUMNS | frozenset({"account_id"})
+_ACCOUNT_COLUMNS = frozenset(
     {
         "id",
-        "source_sha256",
-        "created_at",
         "bank",
         "product",
-        "masked_account_number",
         "currency",
-        "period_start",
-        "period_end",
-        "statement_number",
-        "page_number",
-        "total_pages",
-        "opening_balance",
-        "closing_balance",
-        "one_day_retention",
-        "multi_day_retention",
-        "available_balance",
+        "masked_account_number",
+        "identity_status",
+        "created_at",
     }
 )
 _TRANSACTION_COLUMNS = frozenset(
@@ -97,6 +108,19 @@ class StoredStatementMetadata:
     created_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class StoredAccountMetadata:
+    id: str
+    bank: str
+    product: str
+    currency: str | None
+    masked_account_number: str | None
+    identity_status: str
+    statement_count: int
+    period_start: date
+    period_end: date
+
+
 class StatementRepository:
     """Store normalized statements without retaining their source documents."""
 
@@ -116,8 +140,30 @@ class StatementRepository:
                 with connection:
                     connection.executescript(
                         """
-                    CREATE TABLE IF NOT EXISTS statements (
+                    CREATE TABLE accounts (
                         id TEXT PRIMARY KEY,
+                        bank TEXT NOT NULL,
+                        product TEXT NOT NULL,
+                        currency TEXT,
+                        masked_account_number TEXT,
+                        identity_status TEXT NOT NULL CHECK (
+                            (identity_status = 'visible_mask' AND masked_account_number GLOB '*[0-9]*')
+                            OR identity_status = 'ambiguous'
+                        ),
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE UNIQUE INDEX accounts_visible_identity_with_currency
+                    ON accounts(bank, product, currency, masked_account_number)
+                    WHERE identity_status = 'visible_mask' AND currency IS NOT NULL;
+
+                    CREATE UNIQUE INDEX accounts_visible_identity_without_currency
+                    ON accounts(bank, product, masked_account_number)
+                    WHERE identity_status = 'visible_mask' AND currency IS NULL;
+
+                    CREATE TABLE statements (
+                        id TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL REFERENCES accounts(id),
                         source_sha256 TEXT NOT NULL UNIQUE,
                         created_at TEXT NOT NULL,
                         bank TEXT NOT NULL,
@@ -152,19 +198,30 @@ class StatementRepository:
 
                     CREATE INDEX IF NOT EXISTS transactions_statement_position
                     ON transactions(statement_id, position);
+
+                    CREATE TABLE transaction_classifications (
+                        transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+                        merchant_name TEXT,
+                        merchant_key TEXT,
+                        category TEXT NOT NULL,
+                        rule_id TEXT,
+                        ruleset_version TEXT NOT NULL,
+                        classified_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX statements_account_period
+                    ON statements(account_id, period_start, period_end, id);
                     """
                     )
-                    self._validate_schema(connection)
-                    connection.execute("PRAGMA user_version = 1")
-                    self._migrate_v1_to_v2(connection)
+                    self._validate_v3_schema(connection)
+                    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 return
-            if version == 1:
-                with connection:
-                    self._migrate_v1_to_v2(connection)
+            if version in (1, 2):
+                self._migrate_to_v3(connection, version)
                 return
             if version != SCHEMA_VERSION:
                 raise IncompatibleSchemaError("The database schema version is not supported")
-            self._validate_v2_schema(connection)
+            self._validate_v3_schema(connection)
 
     def get(self, statement_id: str) -> StoredStatement | None:
         with closing(self._connect()) as connection:
@@ -202,25 +259,61 @@ class StatementRepository:
                 if statement_id in rows
             )
 
-    def history_for_anchor(self, anchor: StoredStatement) -> tuple[StoredStatement, ...]:
-        """Return the chronologically ordered history with the anchor's visible account."""
-        account = anchor.statement.masked_account_number
-        if account is None or not any(character.isdigit() for character in account):
-            return (anchor,)
+    def list_accounts(self) -> tuple[StoredAccountMetadata, ...]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM statements
-                WHERE bank = ? AND product = ? AND currency IS ?
-                  AND masked_account_number = ?
-                ORDER BY period_start, period_end, id
+                SELECT accounts.*, COUNT(statements.id) AS statement_count,
+                       MIN(statements.period_start) AS period_start,
+                       MAX(statements.period_end) AS period_end
+                FROM accounts JOIN statements ON statements.account_id = accounts.id
+                GROUP BY accounts.id
+                ORDER BY period_end DESC, period_start DESC, bank, product, accounts.id
+                """
+            ).fetchall()
+        return tuple(self._account_metadata(row) for row in rows)
+
+    def get_account(self, account_id: str) -> StoredAccountMetadata | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT accounts.*, COUNT(statements.id) AS statement_count,
+                       MIN(statements.period_start) AS period_start,
+                       MAX(statements.period_end) AS period_end
+                FROM accounts JOIN statements ON statements.account_id = accounts.id
+                WHERE accounts.id = ?
+                GROUP BY accounts.id
                 """,
-                (
-                    anchor.statement.bank,
-                    anchor.statement.product,
-                    anchor.statement.currency,
-                    account,
-                ),
+                (account_id,),
+            ).fetchone()
+        return None if row is None else self._account_metadata(row)
+
+    def account_id_for_statement(self, statement_id: str) -> str | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT account_id FROM statements WHERE id = ?", (statement_id,)
+            ).fetchone()
+        return None if row is None else row["account_id"]
+
+    def history_for_account(
+        self,
+        account_id: str,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> tuple[StoredStatement, ...]:
+        conditions = ["account_id = ?"]
+        parameters: list[str] = [account_id]
+        if from_date is not None:
+            conditions.append("period_end >= ?")
+            parameters.append(from_date.isoformat())
+        if to_date is not None:
+            conditions.append("period_start <= ?")
+            parameters.append(to_date.isoformat())
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM statements WHERE {' AND '.join(conditions)} "
+                "ORDER BY period_start, period_end, id",
+                parameters,
             ).fetchall()
             return tuple(self._stored_statement(connection, row) for row in rows)
 
@@ -229,18 +322,20 @@ class StatementRepository:
         classified_transactions: list[Transaction] = []
         with closing(self._connect()) as connection, connection:
             with connection:
+                account_id = self._resolve_account(connection, statement, created_at)
                 connection.execute(
                     """
                     INSERT INTO statements (
-                        id, source_sha256, created_at, bank, product,
+                        id, account_id, source_sha256, created_at, bank, product,
                         masked_account_number, currency, period_start, period_end,
                         statement_number, page_number, total_pages, opening_balance,
                         closing_balance, one_day_retention, multi_day_retention,
                         available_balance
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         statement_id,
+                        account_id,
                         source_sha256,
                         created_at,
                         statement.bank,
@@ -342,9 +437,23 @@ class StatementRepository:
     def delete(self, statement_id: str) -> bool:
         with closing(self._connect()) as connection, connection:
             with connection:
+                row = connection.execute(
+                    "SELECT account_id FROM statements WHERE id = ?", (statement_id,)
+                ).fetchone()
+                if row is None:
+                    return False
                 deleted = connection.execute(
                     "DELETE FROM statements WHERE id = ?", (statement_id,)
                 ).rowcount
+                connection.execute(
+                    """
+                    DELETE FROM accounts
+                    WHERE id = ? AND NOT EXISTS (
+                        SELECT 1 FROM statements WHERE account_id = ?
+                    )
+                    """,
+                    (row["account_id"], row["account_id"]),
+                )
         return deleted == 1
 
     def _connect(self) -> sqlite3.Connection:
@@ -360,12 +469,12 @@ class StatementRepository:
         ).fetchone() is not None
 
     @classmethod
-    def _validate_schema(cls, connection: sqlite3.Connection) -> None:
+    def _validate_v1_schema(cls, connection: sqlite3.Connection) -> None:
         if not cls._table_exists(connection, "statements") or not cls._table_exists(
             connection, "transactions"
         ):
             raise IncompatibleSchemaError("The database schema is incomplete")
-        if cls._column_names(connection, "statements") != _STATEMENT_COLUMNS:
+        if cls._column_names(connection, "statements") != _V1_STATEMENT_COLUMNS:
             raise IncompatibleSchemaError("The statements schema is not supported")
         if cls._column_names(connection, "transactions") != _TRANSACTION_COLUMNS:
             raise IncompatibleSchemaError("The transactions schema is not supported")
@@ -378,8 +487,7 @@ class StatementRepository:
 
     @classmethod
     def _migrate_v1_to_v2(cls, connection: sqlite3.Connection) -> None:
-        cls._validate_schema(connection)
-        connection.execute("BEGIN")
+        cls._validate_v1_schema(connection)
         connection.execute(
             """
             CREATE TABLE transaction_classifications (
@@ -429,11 +537,10 @@ class StatementRepository:
                 ),
             )
         cls._validate_v2_schema(connection)
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @classmethod
     def _validate_v2_schema(cls, connection: sqlite3.Connection) -> None:
-        cls._validate_schema(connection)
+        cls._validate_v1_schema(connection)
         if not cls._table_exists(connection, "transaction_classifications"):
             raise IncompatibleSchemaError("The classifications schema is incomplete")
         if cls._column_names(connection, "transaction_classifications") != _CLASSIFICATION_COLUMNS:
@@ -446,6 +553,161 @@ class StatementRepository:
             "id",
         ):
             raise IncompatibleSchemaError("The classification cascade is missing")
+
+    @classmethod
+    def _validate_v3_schema(cls, connection: sqlite3.Connection) -> None:
+        if not cls._table_exists(connection, "accounts"):
+            raise IncompatibleSchemaError("The accounts schema is incomplete")
+        if cls._column_names(connection, "accounts") != _ACCOUNT_COLUMNS:
+            raise IncompatibleSchemaError("The accounts schema is not supported")
+        if cls._column_names(connection, "statements") != _STATEMENT_COLUMNS:
+            raise IncompatibleSchemaError("The statements schema is not supported")
+        if cls._column_names(connection, "transactions") != _TRANSACTION_COLUMNS:
+            raise IncompatibleSchemaError("The transactions schema is not supported")
+        if cls._column_names(connection, "transaction_classifications") != _CLASSIFICATION_COLUMNS:
+            raise IncompatibleSchemaError("The classifications schema is not supported")
+        if not cls._has_cascade(connection, "transactions", "statement_id", "statements", "id"):
+            raise IncompatibleSchemaError("The transaction cascade is missing")
+        if not cls._has_cascade(
+            connection,
+            "transaction_classifications",
+            "transaction_id",
+            "transactions",
+            "id",
+        ):
+            raise IncompatibleSchemaError("The classification cascade is missing")
+        if not cls._has_unique_index(connection, "statements", ("source_sha256",)):
+            raise IncompatibleSchemaError("The statements hash constraint is missing")
+        if not cls._has_unique_index(connection, "transactions", ("statement_id", "position")):
+            raise IncompatibleSchemaError("The transaction position constraint is missing")
+        if not cls._has_index(connection, "statements", ("account_id", "period_start", "period_end", "id")):
+            raise IncompatibleSchemaError("The account period index is missing")
+        expected_indexes = {
+            "accounts_visible_identity_with_currency": (
+                "bank,product,currency,masked_account_number",
+                "identity_status='visible_mask'andcurrencyisnotnull",
+            ),
+            "accounts_visible_identity_without_currency": (
+                "bank,product,masked_account_number",
+                "identity_status='visible_mask'andcurrencyisnull",
+            ),
+        }
+        for name, (columns, predicate) in expected_indexes.items():
+            sql = cls._index_sql(connection, name)
+            normalized_sql = "".join(sql.lower().split()) if sql is not None else ""
+            if not normalized_sql.startswith("createuniqueindex") or columns not in normalized_sql or predicate not in normalized_sql:
+                raise IncompatibleSchemaError("The visible account constraint is missing")
+        if not cls._has_foreign_key(connection, "statements", "account_id", "accounts", "id"):
+            raise IncompatibleSchemaError("The statement account foreign key is missing")
+
+    @classmethod
+    def _migrate_to_v3(cls, connection: sqlite3.Connection, version: int) -> None:
+        if version == 1:
+            cls._validate_v1_schema(connection)
+        else:
+            cls._validate_v2_schema(connection)
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN")
+            if version == 1:
+                cls._migrate_v1_to_v2(connection)
+            cls._validate_v2_schema(connection)
+            connection.execute(
+                """
+                CREATE TABLE accounts (
+                    id TEXT PRIMARY KEY,
+                    bank TEXT NOT NULL,
+                    product TEXT NOT NULL,
+                    currency TEXT,
+                    masked_account_number TEXT,
+                    identity_status TEXT NOT NULL CHECK (
+                        (identity_status = 'visible_mask' AND masked_account_number GLOB '*[0-9]*')
+                        OR identity_status = 'ambiguous'
+                    ),
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            cls._create_account_indexes(connection)
+            connection.execute(
+                """
+                CREATE TABLE statements_v3 (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL REFERENCES accounts(id),
+                    source_sha256 TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    bank TEXT NOT NULL,
+                    product TEXT NOT NULL,
+                    masked_account_number TEXT,
+                    currency TEXT,
+                    period_start TEXT NOT NULL,
+                    period_end TEXT NOT NULL,
+                    statement_number TEXT,
+                    page_number INTEGER,
+                    total_pages INTEGER,
+                    opening_balance INTEGER NOT NULL,
+                    closing_balance INTEGER NOT NULL,
+                    one_day_retention INTEGER,
+                    multi_day_retention INTEGER,
+                    available_balance INTEGER
+                )
+                """
+            )
+            visible_accounts: dict[tuple[str, str, str | None, str], str] = {}
+            statement_rows = connection.execute("SELECT * FROM statements ORDER BY id").fetchall()
+            for row in statement_rows:
+                account = row["masked_account_number"]
+                if account is not None and any(character.isdigit() for character in account):
+                    key = (row["bank"], row["product"], row["currency"], account)
+                    account_id = visible_accounts.get(key)
+                    if account_id is None:
+                        account_id = str(uuid4())
+                        visible_accounts[key] = account_id
+                        status = "visible_mask"
+                    else:
+                        status = None
+                else:
+                    account_id = str(uuid4())
+                    status = "ambiguous"
+                if status is not None:
+                    connection.execute(
+                        """
+                        INSERT INTO accounts (
+                            id, bank, product, currency, masked_account_number,
+                            identity_status, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            account_id,
+                            row["bank"],
+                            row["product"],
+                            row["currency"],
+                            account,
+                            status,
+                            row["created_at"],
+                        ),
+                    )
+                values = [row[column] for column in _V1_STATEMENT_COLUMN_SEQUENCE]
+                connection.execute(
+                    f"INSERT INTO statements_v3 (account_id, {', '.join(_V1_STATEMENT_COLUMN_SEQUENCE)}) "
+                    f"VALUES ({', '.join('?' for _ in range(len(values) + 1))})",
+                    [account_id, *values],
+                )
+            connection.execute("DROP TABLE statements")
+            connection.execute("ALTER TABLE statements_v3 RENAME TO statements")
+            connection.execute(
+                "CREATE INDEX statements_account_period ON statements(account_id, period_start, period_end, id)"
+            )
+            cls._validate_v3_schema(connection)
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise IncompatibleSchemaError("The migrated foreign keys are invalid")
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _column_names(connection: sqlite3.Connection, table_name: str) -> frozenset[str]:
@@ -465,6 +727,106 @@ class StatementRepository:
             if index_columns == columns:
                 return True
         return False
+
+    @staticmethod
+    def _has_index(
+        connection: sqlite3.Connection, table_name: str, columns: tuple[str, ...]
+    ) -> bool:
+        return any(
+            tuple(row["name"] for row in connection.execute(f"PRAGMA index_info({index['name']})"))
+            == columns
+            for index in connection.execute(f"PRAGMA index_list({table_name})")
+        )
+
+    @staticmethod
+    def _index_sql(connection: sqlite3.Connection, index_name: str) -> str | None:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", (index_name,)
+        ).fetchone()
+        return None if row is None else row["sql"]
+
+    @staticmethod
+    def _has_foreign_key(
+        connection: sqlite3.Connection,
+        table_name: str,
+        source_column: str,
+        target_table: str,
+        target_column: str,
+    ) -> bool:
+        return any(
+            foreign_key["table"] == target_table
+            and foreign_key["from"] == source_column
+            and foreign_key["to"] == target_column
+            for foreign_key in connection.execute(f"PRAGMA foreign_key_list({table_name})")
+        )
+
+    @staticmethod
+    def _create_account_indexes(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX accounts_visible_identity_with_currency
+            ON accounts(bank, product, currency, masked_account_number)
+            WHERE identity_status = 'visible_mask' AND currency IS NOT NULL
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX accounts_visible_identity_without_currency
+            ON accounts(bank, product, masked_account_number)
+            WHERE identity_status = 'visible_mask' AND currency IS NULL
+            """
+        )
+
+    @staticmethod
+    def _resolve_account(
+        connection: sqlite3.Connection, statement: Statement, created_at: str
+    ) -> str:
+        account = statement.masked_account_number
+        visible = account is not None and any(character.isdigit() for character in account)
+        if not visible:
+            account_id = str(uuid4())
+            connection.execute(
+                """
+                INSERT INTO accounts (
+                    id, bank, product, currency, masked_account_number, identity_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'ambiguous', ?)
+                """,
+                (account_id, statement.bank, statement.product, statement.currency, account, created_at),
+            )
+            return account_id
+        row = connection.execute(
+            """
+            SELECT id FROM accounts
+            WHERE bank = ? AND product = ? AND currency IS ? AND masked_account_number = ?
+              AND identity_status = 'visible_mask'
+            """,
+            (statement.bank, statement.product, statement.currency, account),
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+        account_id = str(uuid4())
+        try:
+            connection.execute(
+                """
+                INSERT INTO accounts (
+                    id, bank, product, currency, masked_account_number, identity_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'visible_mask', ?)
+                """,
+                (account_id, statement.bank, statement.product, statement.currency, account, created_at),
+            )
+        except sqlite3.IntegrityError:
+            row = connection.execute(
+                """
+                SELECT id FROM accounts
+                WHERE bank = ? AND product = ? AND currency IS ? AND masked_account_number = ?
+                  AND identity_status = 'visible_mask'
+                """,
+                (statement.bank, statement.product, statement.currency, account),
+            ).fetchone()
+            if row is None:
+                raise
+            return row["id"]
+        return account_id
 
     @staticmethod
     def _has_statement_cascade(connection: sqlite3.Connection) -> bool:
@@ -566,4 +928,18 @@ class StatementRepository:
             page_number=row["page_number"],
             total_pages=row["total_pages"],
             created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _account_metadata(row: sqlite3.Row) -> StoredAccountMetadata:
+        return StoredAccountMetadata(
+            id=row["id"],
+            bank=row["bank"],
+            product=row["product"],
+            currency=row["currency"],
+            masked_account_number=row["masked_account_number"],
+            identity_status=row["identity_status"],
+            statement_count=row["statement_count"],
+            period_start=date.fromisoformat(row["period_start"]),
+            period_end=date.fromisoformat(row["period_end"]),
         )
