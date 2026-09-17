@@ -1,33 +1,30 @@
 # Zut Balance
 
-Zut Balance es un proyecto de procesamiento de documentos financieros para
-convertir cartolas bancarias en movimientos normalizados y confiables. Su visión
-es construir una plataforma de inteligencia de gastos que avance desde la
-ingesta determinista de PDFs hasta métricas y señales basadas en datos
-verificados.
+Zut Balance convierte cartolas bancarias digitales en movimientos normalizados,
+clasificados y analizables. Está diseñado para entregar información de gasto
+trazable a partir de datos verificados, no para dar asesoría financiera ni
+interpretar documentos inciertos.
 
-El flujo objetivo es: PDF, extracción, normalización, categorización, análisis
-y señales. La visión, las fases y sus dependencias están en
-[docs/roadmap.md](docs/roadmap.md).
+## Estado y alcance
 
-## Estado actual
+Actualmente procesa cartolas PDF digitales de **Cuenta Vista Banco de Chile**
+con los layouts y variantes documentados. Rechaza de forma explícita cartolas
+escaneadas, protegidas, sin texto extraíble, de otros bancos o productos y
+formatos no validados.
 
-Zut Balance incluye una librería y un servicio HTTP que procesan cartolas PDF
-digitales de Cuenta Vista de Banco de Chile. Soporta el layout inicial, la
-variante digital v2 validada y las variantes sintéticas documentadas de varias
-páginas, períodos que cruzan de año, columnas desplazadas y metadatos
-reordenados. Cada movimiento persistido incorpora una clasificación determinista
-de categoría y comercio cuando una regla lo identifica.
+Es un proyecto privado e independiente, sin afiliación, patrocinio ni respaldo
+de Banco de Chile.
 
-El análisis histórico selecciona un ámbito persistido de cuenta mediante un
-identificador opaco y resuelve automáticamente el historial compatible. Expone avisos tipados de cobertura y clasificación, además
-del mayor cambio mensual cuando existe. Las señales son deterministas y no
-entregan recomendaciones, predicciones ni conclusiones financieras no
-verificables.
+El flujo es:
 
-El parser devuelve una cartola normalizada y conciliada, o un error explícito
-si el PDF no es legible, está protegido, no contiene texto extraíble, no
-corresponde al formato soportado o no puede extraerse de forma confiable.
+```text
+Cartola PDF -> validación -> normalización -> categorización -> análisis -> señales
+```
+
+Las categorías, métricas y señales son deterministas. No hay OCR, IA,
+clasificación probabilística, chatbot, predicciones ni recomendaciones
+financieras. Consulte [Arquitectura](docs/architecture.md) y el
+[roadmap](docs/roadmap.md) para conocer el estado y las fases futuras.
 
 ## Inicio rápido
 
@@ -35,149 +32,81 @@ Se requiere Python `>=3.12,<3.15`.
 
 ```bash
 python -m pip install -e ".[dev]"
+pytest
 ```
 
-Para un despliegue privado reproducible, siga la
-[guía Docker](docs/deployment.md).
-La configuración local predeterminada queda disponible en
-`https://localhost:8443`.
+Uso como biblioteca:
 
 ```python
 from zut_balance import parse_banco_chile_cuenta_vista
 
-statement = parse_banco_chile_cuenta_vista(
-    "media/cartola_ejemplo_banco_chile.pdf"
-)
-
+statement = parse_banco_chile_cuenta_vista("cartola.pdf")
 for transaction in statement.transactions:
     print(transaction.date, transaction.movement_type, transaction.amount)
 ```
 
-La función acepta una ruta local o el contenido binario de un PDF y devuelve un
-`Statement` con metadatos, resumen de saldos y transacciones. El número de
-cuenta se enmascara antes de entregarse al consumidor.
+La función acepta una ruta local o el contenido binario de un PDF y devuelve una
+cartola normalizada y conciliada. El número de cuenta se enmascara antes de
+entregarlo al consumidor.
 
-## Servicio HTTP
+## Formas de uso
 
-Inicie el servicio con:
+### API local
+
+Para desarrollo de la API, configure una ruta SQLite y una API key de prueba:
 
 ```bash
 export ZUT_BALANCE_DATABASE_PATH="./zut-balance.sqlite3"
 export ZUT_BALANCE_API_KEY="un-secreto-largo-y-aleatorio"
-export ZUT_BALANCE_CORS_ORIGINS="http://127.0.0.1:5173"
 uvicorn zut_balance.api:app
 ```
 
-`GET /health` devuelve el estado operativo sin procesar cartolas. Para procesar
-un PDF, envíe un único campo multipart llamado `file` y la API key a
-`POST /v1/statements`:
+`GET /health` no requiere autenticación. Las rutas de datos aceptan una sesión
+web válida o `Authorization: Bearer` con la API key. Consulte el
+[contrato HTTP](docs/architecture.md#api-y-autenticación) y las especificaciones
+para los detalles de cada endpoint.
 
-```bash
-curl -F "file=@media/cartola_ejemplo_banco_chile.pdf;type=application/pdf" \
-  -H "Authorization: Bearer $ZUT_BALANCE_API_KEY" \
-  http://127.0.0.1:8000/v1/statements
-```
+### SPA de desarrollo
 
-Una respuesta `200` contiene `metadata` (banco, producto, cuenta enmascarada,
-moneda, período, número de cartola y paginación), `summary` (saldos y
-retenciones) y `transactions` (fecha, descripción, referencias, monto, tipo y
-saldo informado). Las fechas usan ISO 8601, los montos son enteros y los campos
-opcionales ausentes son `null`.
+La SPA está en `frontend/` y requiere Node.js 24 o compatible. Siga su
+[guía de desarrollo](frontend/README.md) para iniciar Vite, configurar la API
+local y ejecutar sus pruebas. La interfaz usa una cookie `HttpOnly` y no solicita
+ni conserva API keys.
 
-Los errores usan el formato `{"error":{"code":"...","message":"..."}}`:
-las entradas inválidas o cartolas rechazadas devuelven `400`, los límites de
-tamaño o páginas devuelven `413` y los fallos inesperados devuelven `500`. Los
-mensajes no incluyen el contenido de la cartola ni detalles de implementación.
+### Despliegue privado con Docker
 
-La respuesta exitosa añade `statement_id`. Una carga con los mismos bytes de
-PDF reutiliza ese identificador y no duplica movimientos. Las rutas autenticadas
-adicionales son:
+Para un despliegue reproducible, siga la [guía Docker](docs/deployment.md). El
+stack sirve SPA y API desde el mismo origen HTTPS mediante Caddy, mantiene SQLite
+y backups en volúmenes privados y no publica la API directamente. La
+configuración local predeterminada usa `https://localhost:8443`.
 
-- `GET /v1/statements/{statement_id}`: devuelve una cartola completa.
-- `GET /v1/statements?limit=50&offset=0`: lista metadatos, con `limit` entre 1
-  y 100, sin movimientos.
-- `DELETE /v1/statements/{statement_id}`: elimina permanentemente la cartola y
-  sus movimientos, y devuelve `204`.
-- `GET /v1/accounts`: devuelve el catálogo autenticado y deduplicado de ámbitos
-  compatibles, con metadatos enmascarados únicamente.
-- `GET /v1/analysis?account_id=<uuid>[&from=YYYY-MM-DD][&to=YYYY-MM-DD]`:
-  calcula al vuelo métricas de gasto, evolución mensual, comercios y recurrencias
-  para todas las cartolas del ámbito seleccionado.
-  Sin fechas, usa todo el historial disponible; las fechas opcionales son
-  inclusivas. Fronteras mensuales compartidas se aceptan, pero solapamientos
-  reales se rechazan. La respuesta declara las cartolas incluidas en
-  `scope.account_id` y `scope.statement_ids`, estos últimos en orden cronológico.
+El certificado se emite con una CA interna. Instale esa CA en los equipos
+autorizados; no ignore advertencias TLS. La configuración detallada y la
+operación están en la guía de despliegue.
 
-El identificador de cuenta es un ámbito compatible opaco, no una prueba de
-identidad bancaria ni un número de cuenta derivado.
+## Privacidad y operación
 
-El análisis incluye débitos de consumo, comisiones y movimientos sin categoría;
-informa créditos, transferencias, retiros e ingresos por separado. No persiste
-resultados ni expone descripciones o cuentas. Los rangos son inclusivos y no
-tienen límite artificial de meses o cartolas.
+- No se persiste el PDF original ni su texto extraído; SQLite guarda resultados
+  normalizados hasta su eliminación explícita.
+- La base SQLite y los backups contienen datos financieros sensibles y requieren
+  controles de acceso del operador.
+- Los ejemplos y pruebas usan solo datos sintéticos o anonimizados.
+- La API key es para integraciones y no debe llegar a la SPA.
 
-## Interfaz web de desarrollo
-
-La SPA local está en `frontend/`. En otra terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Configure el backend con `ZUT_BALANCE_WEB_AUTH_ENABLED=true`, un hash Argon2,
-un secreto de sesión, `ZUT_BALANCE_API_KEY`,
-`ZUT_BALANCE_COOKIE_SECURE=false` y
-`ZUT_BALANCE_TRUSTED_ORIGINS=http://127.0.0.1:5173`.
-Abra `http://127.0.0.1:5173` e inicie sesión con la contraseña del administrador.
-La SPA usa una cookie `HttpOnly` y no solicita ni conserva API keys.
-En Análisis, una única cuenta se selecciona y analiza automáticamente; con varias,
-el selector `Cuenta` requiere una elección explícita. Fechas válidas actualizan el
-resultado sin un botón de actualización.
-
-## Límites y privacidad
-
-- La API acepta un PDF de hasta `10 MiB` y `20` páginas por solicitud. No exige
-  autenticación para `GET /health`; las rutas de datos requieren una sesión web
-  válida o `ZUT_BALANCE_API_KEY` mediante `Authorization: Bearer`.
-- SQLite guarda resultados normalizados hasta su eliminación explícita. Nunca
-  guarda el PDF original ni el texto extraído.
-- SQLite no cifra en reposo: el directorio y archivo configurados en
-  `ZUT_BALANCE_DATABASE_PATH` deben tener permisos restrictivos para el usuario
-  del servicio. El runtime puede usar almacenamiento temporal durante una carga
-  multipart; su limpieza corresponde al entorno de despliegue.
-- El servicio valida el esquema SQLite al iniciar. Si el archivo contiene una
-  versión de Zut Balance incompatible o futura, falla de forma segura sin
-  modificarlo; use una ruta de base nueva o migre la instalación antes de
-  reiniciar el servicio.
-- Las categorías, métricas y señales son deterministas y se calculan con
-  resultados ya clasificados; no hay corrección manual, clasificación por IA,
-  LLM ni OCR.
-- Las cartolas escaneadas, otros bancos, otros productos y layouts no documentados se rechazan.
-- El soporte multipágina se limita a la matriz sintética aprobada; las cartolas reales no validadas se rechazan.
-- Las pruebas y ejemplos usan únicamente datos sintéticos o anonimizados; no se incorporan cartolas reales al repositorio.
+Lea [Privacidad](docs/privacy.md) antes de desplegar. Este repositorio es
+privado: no debe compartirse con cartolas, secretos ni datos financieros reales.
 
 ## Documentación
 
-- [Roadmap del proyecto](docs/roadmap.md): visión, prioridades y fases futuras.
-- [Esquema de base de datos](docs/database-schema.md): tablas SQLite y migraciones vigentes.
-- [Especificación de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/spec.md).
-- [Plan técnico de la ingesta actual](specs/banco-chile-cuenta-vista-ingestion/plan.md).
-- [Especificación de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/spec.md).
-- [Plan técnico de robustecimiento](specs/banco-chile-cuenta-vista-ingestion-hardening/plan.md).
-- [Especificación del servicio de procesamiento](specs/processing-service/spec.md).
-- [Plan técnico del servicio de procesamiento](specs/processing-service/plan.md).
-- [Especificación de persistencia](specs/persistence/spec.md).
-- [Plan técnico de persistencia](specs/persistence/plan.md).
-- [Especificación del layout v2](specs/banco-chile-cuenta-vista-v2/spec.md).
-- [Plan técnico del layout v2](specs/banco-chile-cuenta-vista-v2/plan.md).
-- [Especificación de análisis](specs/analysis/spec.md).
-- [Plan técnico de análisis](specs/analysis/plan.md).
-- [Especificación histórica de insights](specs/insights/spec.md).
-- [Plan técnico histórico de insights](specs/insights/plan.md).
-- [Especificación de señales de análisis](specs/analysis-signals/spec.md).
-- [Plan técnico de señales de análisis](specs/analysis-signals/plan.md).
-- [Especificación de interfaz](specs/interface/spec.md).
-- [Plan técnico de interfaz](specs/interface/plan.md).
-- [Guía de despliegue Docker](docs/deployment.md).
+- [Arquitectura](docs/architecture.md): componentes, flujo de datos y API.
+- [Despliegue Docker](docs/deployment.md): configuración, inicio, backup y
+  restauración privada.
+- [Privacidad](docs/privacy.md): datos procesados, retención y responsabilidades.
+- [Roadmap](docs/roadmap.md): fases completadas y planificadas.
+- [Especificaciones](specs/): requisitos, planes y tareas por fase.
+
+## Estado del repositorio
+
+Zut Balance se mantiene como proyecto privado. No está destinado a distribución,
+contribución pública ni reutilización externa sin autorización de sus
+mantenedores.

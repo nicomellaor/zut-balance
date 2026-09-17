@@ -51,6 +51,10 @@ La fase 12 está completada: reemplaza la cartola ancla por un ámbito persistid
 de cuenta y un catálogo autenticado. La fase 13 está completada: adapta la SPA a
 ese contrato, automatiza la consulta y prioriza resumen y gráficos.
 
+Las siguientes fases priorizan la operación privada confiable, documentación
+clara para mantenimiento interno y una cobertura de categorización ampliable sin
+perder determinismo ni privacidad.
+
 Los requisitos y límites exactos están en
 [`specs/banco-chile-cuenta-vista-ingestion/`](../specs/banco-chile-cuenta-vista-ingestion/)
 y
@@ -73,12 +77,30 @@ y
 | 11. Señales de análisis | Sustitución de insights narrativos por avisos y highlights tipados, con adaptación contractual mínima de SPA. | Fases 7 y 10. | Completada |
 | 12. Análisis por cuenta | Identidad opaca de ámbito, catálogo de cuentas y reemplazo de `anchor_statement_id` por `account_id`. | Fases 4, 10 y 11. | Completada |
 | 13. Flujo del dashboard | Selector compacto de cuenta, análisis automático y jerarquía centrada en resumen y gráficos. | Fases 8, 11 y 12. | Completada |
+| 14. Documentación de proyecto privado | Reestructurar la documentación para uso y mantenimiento internos: propósito, capacidades y límites, arquitectura, inicio rápido, despliegue, privacidad y operación. | Fase 13. | Completada |
+| 15. Operación local persistente | Configurar reinicio automático de `caddy` y `api` mediante Compose; el backup conserva ejecución manual. Documentar reinicio después de reboot, actualización, parada y persistencia de volúmenes. | Fase 14. | Planificada |
+| 16. TLS confiable en red privada | Documentar y verificar la exportación e instalación de la CA interna de Caddy en equipos autorizados, incluido Firefox cuando use un almacén propio. | Fase 15. | Planificada |
+| 17. Catálogo local de comercios y categorías | Sustituir reglas en código por un catálogo versionado dentro del repositorio, validado al iniciar y compatible con normalización, prioridad y trazabilidad actuales. Incluir reglas auditables para Cineplanet, Servicios Médicos, Unimarc, PedidosYa y otros comercios respaldados por pruebas. | Fase 6. | Planificada |
+| 18. Administración local del catálogo | Evaluar reglas persistidas, alias, validación de conflictos y una interfaz o API administrativa para modificar el catálogo sin desplegar una nueva versión. | Fase 17. | Planificada |
 
 ## Orden de trabajo
 
-La fase 13 depende de la fase 12 y debe adaptar la SPA al contrato incompatible
-basado en `account_id`. El backend conserva determinismo y privacidad; la fase
-de interfaz no recalcula resultados.
+Las fases 14 a 16 mejoran la operación y documentación sin alterar los contratos
+financieros. La fase 15 solo aplica reinicio automático a servicios de larga
+vida: el proceso de backup no debe reiniciarse ni programarse implícitamente.
+
+La fase 16 conserva el modelo de TLS interno vigente. La advertencia de
+certificado de Firefox ocurre cuando el navegador no confía en la CA interna de
+Caddy; la solución es instalar esa CA en cada equipo autorizado, no ignorar la
+advertencia ni desactivar HTTPS. Certificados públicos, DNS externo y exposición
+a Internet continúan fuera de alcance.
+
+La fase 17 mantiene las reglas deterministas, locales y versionadas, pero mueve
+sus datos desde el código hacia un catálogo distribuido con el proyecto. Las
+clasificaciones existentes no se recalculan automáticamente; en instalaciones de
+prueba se pueden eliminar y volver a cargar cartolas. Un procesador como
+`MERCADOPAGO` no se clasifica por defecto: solo se categoriza si la glosa permite
+identificar confiablemente el comercio subyacente.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de
@@ -86,6 +108,15 @@ aceptación. Una fase no se considera completa solo porque sus pruebas pasen: se
 debe comprobar que sus resultados observables satisfacen esos criterios.
 
 ## Iniciativas futuras no comprometidas
+
+### Enriquecimiento externo de comercios
+
+Un servicio remoto o catálogo externo de comercios podrá evaluarse después del
+catálogo local de la fase 17. Antes de adoptarlo se debe definir el tratamiento
+de privacidad de las glosas, licencias y cobertura para Chile, costos, caché,
+disponibilidad, comportamiento ante fallos y criterios para no forzar categorías
+sin evidencia suficiente. Será complementario al catálogo local y no sustituirá
+el fallback `sin_categoria`.
 
 OCR no forma parte del roadmap comprometido. Las cartolas escaneadas o sin texto
 extraíble seguirán rechazándose de forma explícita, porque los formatos digitales
