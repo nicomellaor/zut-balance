@@ -1,5 +1,6 @@
 services:
   caddy:
+    restart: always
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -16,6 +17,7 @@ services:
       - caddy-config:/config
 
   api:
+    restart: always
     build: .
     env_file: ${ZUT_BALANCE_ENV_FILE:-.env}
     environment:

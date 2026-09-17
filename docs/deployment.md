@@ -32,6 +32,18 @@ imágenes ni mensajes. La contraseña se usa únicamente para el login web;
 El generador de hash incluye comillas simples: consérvelas para que Docker Compose
 preserve los signos `$` de Argon2.
 
+Compruebe los servicios de larga vida con:
+
+```bash
+docker compose ps
+```
+
+`caddy` y `api` usan `restart: always`. Si Docker Engine inicia después de un
+reinicio del host, o uno de esos contenedores termina inesperadamente, Docker
+vuelve a iniciarlo. Esta política no corrige secretos, configuración o esquema
+SQLite inválidos: esos fallos requieren intervención del operador. El servicio
+`backup` permanece manual y solo se ejecuta mediante `docker compose run`.
+
 Para uso local, el ejemplo configura `localhost` y puerto `8443`: abra
 `https://localhost:8443`. No requiere modificar `/etc/hosts`. Caddy genera una
 CA interna, por lo que cada equipo autorizado debe confiar su certificado raíz
@@ -55,7 +67,7 @@ curl -H "Authorization: Bearer $ZUT_BALANCE_API_KEY" \
   https://localhost:8443/v1/statements
 ```
 
-## Actualización y parada
+## Actualización
 
 Antes de actualizar, ejecute un backup. Luego reconstruya y reinicie sin borrar
 los volúmenes:
@@ -63,11 +75,21 @@ los volúmenes:
 ```bash
 docker compose run --rm backup
 docker compose up --build -d
+```
+
+## Parada intencional
+
+Para detener y eliminar los contenedores del stack:
+
+```bash
 docker compose down
 ```
 
 `down` conserva `zut-data` y `zut-backups`. No ejecute `down -v` salvo que quiera
-eliminar permanentemente cartolas, clasificaciones, backups y la CA interna.
+eliminar permanentemente cartolas, clasificaciones, backups y la CA interna. Una
+parada intencional con `down` elimina los contenedores, por lo que debe ejecutar
+`docker compose up -d` para levantar el stack nuevamente; la política de reinicio
+no recrea contenedores eliminados.
 
 ## Backup y restauración
 
@@ -95,3 +117,7 @@ Bearer, ejecuta backup y comprueba que la API no publica puertos:
 ```bash
 bash scripts/smoke-compose.sh
 ```
+
+El smoke test usa el puerto `18443` por defecto para no interferir con un stack
+local en `8443`. Puede cambiarlo mediante `ZUT_BALANCE_SMOKE_HTTPS_PORT` si ese
+puerto también está ocupado.
