@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "ruleset_version": "2",
+  "rules": [
+    {
+      "id": "cineplanet-webpay",
+      "category": "entretenimiento",
+      "match_type": "exact",
+      "pattern": "PAGO CINEPLANET WEBPAY",
+      "merchant_name": "Cineplanet",
+      "merchant_key": "CINEPLANET",
+      "priority": 0,
+      "movement_type": null
+    },
+    {
+      "id": "servicios-medicos",
+      "category": "salud",
+      "match_type": "exact",
+      "pattern": "PAGO SERVICIOS MEDICOS",
+      "merchant_name": "Servicios Medicos",
+      "merchant_key": "SERVICIOS MEDICOS",
+      "priority": 0,
+      "movement_type": null
+    },
+    {
+      "id": "transfer-out",
+      "category": "transferencias",
+      "match_type": "prefix",
+      "pattern": "TRASPASO A",
+      "merchant_name": null,
+      "merchant_key": null,
+      "priority": 10,
+      "movement_type": null
+    },
+    {
+      "id": "transfer-in",
+      "category": "transferencias",
+      "match_type": "prefix",
+      "pattern": "TRASPASO DE",
+      "merchant_name": null,
+      "merchant_key": null,
+      "priority": 10,
+      "movement_type": null
+    },
+    {
+      "id": "unimarc",
+      "category": "alimentacion",
+      "match_type": "prefix",
+      "pattern": "PAGO UNIMARC",
+      "merchant_name": "Unimarc",
+      "merchant_key": "UNIMARC",
+      "priority": 10,
+      "movement_type": "debit"
+    },
+    {
+      "id": "pedidosya",
+      "category": "alimentacion",
+      "match_type": "prefix",
+      "pattern": "PAGO PEDIDOSYA",
+      "merchant_name": "PedidosYa",
+      "merchant_key": "PEDIDOSYA",
+      "priority": 10,
+      "movement_type": "debit"
+    },
+    {
+      "id": "pedidosya-dl",
+      "category": "alimentacion",
+      "match_type": "prefix",
+      "pattern": "PAGO DL PEDIDOSYA",
+      "merchant_name": "PedidosYa",
+      "merchant_key": "PEDIDOSYA",
+      "priority": 10,
+      "movement_type": "debit"
+    },
+    {
+      "id": "mercadopago-generic",
+      "category": "compras",
+      "match_type": "prefix",
+      "pattern": "PAGO MERCADOPAGO",
+      "merchant_name": null,
+      "merchant_key": null,
+      "priority": 0,
+      "movement_type": "debit"
+    },
+    {
+      "id": "generic-cinema",
+      "category": "entretenimiento",
+      "match_type": "token_prefix",
+      "pattern": "CINE",
+      "merchant_name": null,
+      "merchant_key": null,
+      "priority": 0,
+      "movement_type": "debit"
+    },
+    {
+      "id": "generic-cafe",
+      "category": "alimentacion",
+      "match_type": "token_prefix",
+      "pattern": "CAFE",
+      "merchant_name": null,
+      "merchant_key": null,
+      "priority": 0,
+      "movement_type": "debit"
+    }
+  ]
+}

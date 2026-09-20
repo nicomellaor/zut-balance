@@ -80,7 +80,7 @@ y
 | 14. Documentación de proyecto privado | Reestructurar la documentación para uso y mantenimiento internos: propósito, capacidades y límites, arquitectura, inicio rápido, despliegue, privacidad y operación. | Fase 13. | Completada |
 | 15. Operación local persistente | Configurar reinicio automático de `caddy` y `api` mediante Compose; el backup conserva ejecución manual. Documentar reinicio después de reboot, actualización, parada y persistencia de volúmenes. | Fase 14. | Completada |
 | 16. TLS confiable en red privada | Documentar y verificar la exportación e instalación de la CA interna de Caddy en equipos autorizados, incluido Firefox cuando use un almacén propio. | Fase 15. | Completada |
-| 17. Catálogo local de comercios y categorías | Sustituir reglas en código por un catálogo versionado dentro del repositorio, validado al iniciar y compatible con normalización, prioridad y trazabilidad actuales. Incluir reglas auditables para Cineplanet, Servicios Médicos, Unimarc, PedidosYa y otros comercios respaldados por pruebas. | Fase 6. | Planificada |
+| 17. Catálogo local de comercios y categorías | Sustituir reglas en código por un catálogo versionado dentro del repositorio, validado al iniciar y compatible con normalización, prioridad y trazabilidad actuales. Incluir reglas auditables para Cineplanet, Servicios Médicos, Unimarc, PedidosYa y otros comercios respaldados por pruebas. | Fase 6. | Completada |
 | 18. Administración local del catálogo | Evaluar reglas persistidas, alias, validación de conflictos y una interfaz o API administrativa para modificar el catálogo sin desplegar una nueva versión. | Fase 17. | Planificada |
 
 ## Orden de trabajo
@@ -98,9 +98,9 @@ a Internet continúan fuera de alcance.
 La fase 17 mantiene las reglas deterministas, locales y versionadas, pero mueve
 sus datos desde el código hacia un catálogo distribuido con el proyecto. Las
 clasificaciones existentes no se recalculan automáticamente; en instalaciones de
-prueba se pueden eliminar y volver a cargar cartolas. Un procesador como
-`MERCADOPAGO` no se clasifica por defecto: solo se categoriza si la glosa permite
-identificar confiablemente el comercio subyacente.
+prueba se pueden eliminar y volver a cargar cartolas. `PAGO:MERCADOPAGO` se
+clasifica como `compras` sin comercio identificado; una regla posterior solo
+puede identificar el comercio subyacente con evidencia específica.
 
 Cada fase pendiente comienza con una especificación en `specs/`, seguida por un
 plan técnico, tareas pequeñas, implementación y verificación de criterios de

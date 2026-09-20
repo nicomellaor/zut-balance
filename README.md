@@ -102,6 +102,8 @@ privado: no debe compartirse con cartolas, secretos ni datos financieros reales.
 - [Despliegue Docker](docs/deployment.md): configuración, inicio, backup y
   restauración privada.
 - [Privacidad](docs/privacy.md): datos procesados, retención y responsabilidades.
+- [Catálogo local de comercios](docs/merchant-catalog.md): reglas locales,
+  versionado y evidencia requerida.
 - [Roadmap](docs/roadmap.md): fases completadas y planificadas.
 - [Especificaciones](specs/): requisitos, planes y tareas por fase.
 

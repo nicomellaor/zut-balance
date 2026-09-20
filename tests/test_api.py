@@ -376,6 +376,32 @@ def test_statement_upload_persists_v2_without_personal_details(client: TestClien
     assert "123456789" not in response_text
 
 
+@pytest.mark.parametrize(
+    ("description", "expected_classification"),
+    [
+        (
+            "PAGO:UNIMARC PROVIDENCIA",
+            {"category": "alimentacion", "merchant_name": "Unimarc", "rule_id": "unimarc", "ruleset_version": "2"},
+        ),
+        (
+            "PAGO:MERCADOPAGO*COMERCIO",
+            {"category": "compras", "merchant_name": None, "rule_id": "mercadopago-generic", "ruleset_version": "2"},
+        ),
+    ],
+)
+def test_statement_api_exposes_explicit_v2_catalog_classifications(
+    client: TestClient, monkeypatch, description: str, expected_classification: dict[str, object]
+) -> None:
+    base = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    statement = replace(base, transactions=(replace(base.transactions[0], description=description),))
+    monkeypatch.setattr(api, "parse_banco_chile_cuenta_vista", lambda _: statement)
+
+    response = _upload(client, FIXTURE_PDF.read_bytes())
+
+    assert response.status_code == 200
+    assert response.json()["transactions"][0]["classification"] == expected_classification
+
+
 def test_statement_list_rejects_invalid_pagination(client: TestClient) -> None:
     assert client.get("/v1/statements", headers=AUTHORIZATION).json()["limit"] == 50
     assert client.get("/v1/statements?limit=100", headers=AUTHORIZATION).json()["limit"] == 100
@@ -555,6 +581,15 @@ def test_analysis_resolves_anchor_history_and_filters_dates(tmp_path: Path) -> N
         "c" * 64,
         datetime.now(UTC).isoformat(),
     )
+    with sqlite3.connect(tmp_path / "historical.sqlite3") as connection:
+        connection.execute(
+            """
+            UPDATE transaction_classifications
+            SET ruleset_version = '1'
+            WHERE transaction_id IN (SELECT id FROM transactions WHERE statement_id = ?)
+            """,
+            (first.id,),
+        )
 
     account_id = repository.account_id_for_statement(second.id)
     assert account_id is not None
@@ -572,10 +607,13 @@ def test_analysis_resolves_anchor_history_and_filters_dates(tmp_path: Path) -> N
         "from": "2026-07-01",
         "to": "2026-08-31",
         "currency": "CLP",
-        "ruleset_versions": ["1"],
+        "ruleset_versions": ["1", "2"],
     }
     assert response.json()["summary"]["transaction_count"] == 2
     assert response.json()["coverage"]["gaps"] == []
+    assert next(notice for notice in response.json()["notices"] if notice["kind"] == "limited_classification")[
+        "ruleset_versions"
+    ] == ["1", "2"]
     assert "COMPRA" not in response.text
     assert filtered.json()["scope"]["statement_ids"] == [second.id]
     assert filtered.json()["scope"]["from"] == "2026-08-01"

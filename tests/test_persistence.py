@@ -213,6 +213,32 @@ def test_repository_deduplicates_lists_and_deletes_statement(tmp_path: Path) -> 
         assert connection.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0
 
 
+def test_repository_preserves_historical_ruleset_for_deduplicated_uploads(tmp_path: Path) -> None:
+    database_path = tmp_path / "statements.sqlite3"
+    repository = StatementRepository(database_path)
+    repository.initialize()
+    statement = parse_banco_chile_cuenta_vista(FIXTURE_PDF.read_bytes())
+    historical = repository.save(statement, "v" * 64, datetime.now(UTC).isoformat())
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            UPDATE transaction_classifications
+            SET ruleset_version = '1'
+            WHERE transaction_id IN (SELECT id FROM transactions WHERE statement_id = ?)
+            """,
+            (historical.id,),
+        )
+
+    duplicate, created = repository.save_or_get(statement, "v" * 64, datetime.now(UTC).isoformat())
+    current = repository.save(statement, "w" * 64, datetime.now(UTC).isoformat())
+
+    assert created is False
+    assert duplicate.id == historical.id
+    assert {transaction.classification.ruleset_version for transaction in duplicate.statement.transactions} == {"1"}
+    assert {transaction.classification.ruleset_version for transaction in current.statement.transactions} == {"2"}
+
+
 def test_repository_get_many_preserves_requested_order_and_omits_missing_ids(tmp_path: Path) -> None:
     repository = StatementRepository(tmp_path / "statements.sqlite3")
     repository.initialize()

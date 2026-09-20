@@ -18,8 +18,9 @@ de Chile.
   aceptar una cartola.
 - SQLite persiste cartolas, movimientos y clasificaciones, pero no el PDF
   original ni el texto extraído.
-- La categorización usa reglas deterministas versionadas sobre una clave de
-  glosa normalizada; una glosa sin regla queda `sin_categoria`.
+- La categorización carga un catálogo local, versionado y validado al iniciar
+  sobre una clave de glosa normalizada; una glosa sin regla queda
+  `sin_categoria`.
 - El análisis calcula métricas, evolución, cobertura, comercios y recurrencias
   desde movimientos ya clasificados.
 - FastAPI expone rutas autenticadas; React entrega la SPA de carga y análisis.
@@ -28,6 +29,8 @@ de Chile.
 
 Las especificaciones de ingesta, persistencia, categorización y análisis en
 [`specs/`](../specs/) describen los contratos detallados y sus límites.
+La política y formato del catálogo están en [Catálogo local de
+comercios](merchant-catalog.md).
 
 ## Datos y límites
 
