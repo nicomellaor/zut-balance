@@ -47,9 +47,8 @@ SQLite inválidos: esos fallos requieren intervención del operador. El servicio
 Para uso local, el ejemplo configura `localhost` y puerto `8443`: abra
 `https://localhost:8443`. No requiere modificar `/etc/hosts`. Caddy genera una
 CA interna, por lo que cada equipo autorizado debe confiar su certificado raíz
-antes de acceder. Obtenga el certificado desde el volumen `caddy-data` del host
-Docker e instálelo mediante el mecanismo de confianza del sistema operativo. No
-ignore advertencias TLS.
+antes de acceder. Siga [Confianza TLS en red privada](#confianza-tls-en-red-privada)
+para exportarla e instalarla. No ignore advertencias TLS.
 
 Para una red privada, use un nombre DNS interno o la IP privada del servidor.
 Puede cambiar a puerto estándar `443` configurando, por ejemplo:
@@ -66,6 +65,140 @@ La API no publica puertos. Los clientes de integración usan el mismo host HTTPS
 curl -H "Authorization: Bearer $ZUT_BALANCE_API_KEY" \
   https://localhost:8443/v1/statements
 ```
+
+## Confianza TLS en red privada
+
+La CA interna permite que Caddy emita certificados para el host privado
+configurado. Trátela como material sensible de confianza: distribúyala solo a
+equipos autorizados mediante un canal controlado. Nunca distribuya archivos de
+`caddy-data` ni intente extraer la clave privada de Caddy.
+
+### Exportar e identificar la CA
+
+Con `caddy` activo, exporte su certificado raíz al directorio actual del host
+Docker. El archivo no contiene secretos de aplicación, pero no debe sustituirse
+por uno recibido de un origen no verificado:
+
+```bash
+docker compose cp \
+  caddy:/data/caddy/pki/authorities/local/root.crt \
+  ./zut-balance-caddy-root.crt
+openssl x509 -in ./zut-balance-caddy-root.crt -noout \
+  -subject -issuer -serial -fingerprint -sha256
+```
+
+Compare la huella SHA-256 con el operador del servidor mediante un canal
+independiente antes de transferir e instalar el archivo en otro equipo. Si el
+comando de copia falla, compruebe `docker compose ps`: Caddy debe haberse iniciado
+al menos una vez para crear su CA.
+
+La CA se conserva en el volumen `caddy-data` durante actualizaciones, reinicios y
+`docker compose down`. `docker compose down -v` elimina ese volumen y genera una
+CA nueva al volver a iniciar el stack; exporte, compruebe y distribuya la nueva
+CA, y retire la anterior de los equipos autorizados.
+
+### Instalar en el sistema
+
+Transfiera `zut-balance-caddy-root.crt` al equipo autorizado después de comprobar
+su huella. Ejecute solo el procedimiento correspondiente al sistema operativo.
+
+**Windows (PowerShell como administrador)**
+
+```powershell
+$certificate = Import-Certificate `
+  -FilePath "$PWD\zut-balance-caddy-root.crt" `
+  -CertStoreLocation Cert:\LocalMachine\Root
+$certificate.Thumbprint
+```
+
+Guarde el thumbprint mostrado para retirar exactamente ese certificado:
+
+```powershell
+Remove-Item "Cert:\LocalMachine\Root\<thumbprint>"
+```
+
+**macOS (Terminal con una cuenta administradora)**
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain \
+  ./zut-balance-caddy-root.crt
+```
+
+Para retirarlo, abra **Keychain Access**, seleccione el llavero **System**, busque
+el sujeto mostrado por `openssl x509`, elimine ese certificado y autentíquese. Si
+prefiere la terminal, obtenga primero su huella SHA-1 con
+`security find-certificate -a -Z /Library/Keychains/System.keychain` y ejecute:
+
+```bash
+sudo security delete-certificate -Z <huella-sha1> \
+  /Library/Keychains/System.keychain
+```
+
+**Debian y Ubuntu**
+
+```bash
+sudo install -m 0644 ./zut-balance-caddy-root.crt \
+  /usr/local/share/ca-certificates/zut-balance-caddy-root.crt
+sudo update-ca-certificates
+```
+
+Para retirarlo:
+
+```bash
+sudo rm /usr/local/share/ca-certificates/zut-balance-caddy-root.crt
+sudo update-ca-certificates
+```
+
+**Fedora y RHEL**
+
+```bash
+sudo install -m 0644 ./zut-balance-caddy-root.crt \
+  /etc/pki/ca-trust/source/anchors/zut-balance-caddy-root.crt
+sudo update-ca-trust extract
+```
+
+Para retirarlo:
+
+```bash
+sudo rm /etc/pki/ca-trust/source/anchors/zut-balance-caddy-root.crt
+sudo update-ca-trust extract
+```
+
+### Instalar en Firefox
+
+Firefox puede usar un almacén de certificados distinto al del sistema. En cada
+perfil de Firefox que no reconozca el sitio tras instalar la CA del sistema:
+
+1. Abra **Configuración** > **Privacidad y seguridad** > **Certificados** >
+   **Ver certificados**.
+2. En **Autoridades**, seleccione **Importar** y elija
+   `zut-balance-caddy-root.crt` cuya huella ya comprobó.
+3. Marque **Confiar en esta CA para identificar sitios web** y confirme.
+4. Para retirarla, vuelva a **Autoridades**, seleccione el certificado por el
+   sujeto mostrado durante la inspección y use **Eliminar o no confiar**.
+
+No acepte una excepción temporal ni continúe si Firefox muestra una advertencia.
+Una advertencia después de importar la CA suele indicar un host distinto a
+`ZUT_BALANCE_HOST`, una CA anterior o que Firefox usa otro perfil.
+
+### Verificar la confianza
+
+En un equipo con acceso al servidor, defina explícitamente el host y puerto que
+configuró en `.env`; no cargue `.env` como script porque contiene secretos.
+
+```bash
+host=balance.intranet
+port=443
+curl --fail --cacert ./zut-balance-caddy-root.crt \
+  "https://${host}:${port}/health"
+```
+
+El comando debe devolver correctamente la respuesta de `/health`. Debe fallar si
+el archivo de CA es incorrecto, el host no coincide con el certificado o el
+servidor no está disponible. No use `--insecure`, `-k` ni excepciones del
+navegador. Finalmente abra la misma URL HTTPS en el navegador y confirme que no
+aparece una advertencia de certificado.
 
 ## Actualización
 
